@@ -26,7 +26,10 @@
     "test:unit": "node --test --test-concurrency=4 \"test/unit/**/*.test.mjs\"",
     "test:integration": "node --test --test-concurrency=2 --test-timeout=600000 \"test/integration/**/*.test.mjs\"",
     "test:e2e": "node --test --test-concurrency=1 --test-timeout=3600000 \"test/e2e/**/*.test.mjs\"",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "release:start": "npx -y --allow-git=all github:anzusystems/release-tools#main start",
+    "release:publish": "npx -y --allow-git=all github:anzusystems/release-tools#main publish",
+    "release:cleanup": "npx -y --allow-git=all github:anzusystems/release-tools#main cleanup"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
