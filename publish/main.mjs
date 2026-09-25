@@ -48,35 +48,54 @@ export function actionEnv(env) {
 }
 
 /**
+ * Runs one mode with an action environment; the errors become the result annotation.
+ * @param {string} mode validate | build | publish
+ * @param {import('./common.mjs').ActionEnv} a
+ * @param {{ artifactDir: string, statePath?: string, tagObject?: string, tarballSha512?: string }} io
+ * @returns {Promise<{ ok: boolean, code: string | null, error?: unknown }>}
+ */
+export async function runMode(mode, a, io) {
+  try {
+    if (mode === 'validate') await validate(a)
+    else if (mode === 'build') await build(a, /** @type {string} */ (io.statePath), io.artifactDir)
+    else if (mode === 'publish') await publish(a, { artifactDir: io.artifactDir, tagObject: io.tagObject ?? '', tarballSha512: io.tarballSha512 ?? '' })
+    else throw new Error(`unknown mode ${mode}`)
+    return { ok: true, code: null }
+  } catch (e) {
+    const result = e instanceof ActionResult ? e : e instanceof ReleaseError ? new ActionResult('invalid-tag', e.message) : null
+    if (result) {
+      a.annotate(result.fail ? 'error' : 'notice', result.code, result.message)
+      if (!result.fail && mode === 'validate') a.output('release', 'false')
+      return { ok: !result.fail, code: result.code, error: e }
+    }
+    const code = mode === 'publish' ? 'publish-failed' : 'build-failed'
+    a.annotate('error', code, asMessage(e))
+    return { ok: false, code, error: e }
+  }
+}
+
+/**
  * @param {string} mode validate | build | publish
  * @param {NodeJS.ProcessEnv} env
  */
 export async function main(mode, env) {
-  let a = null
+  let a
   try {
     a = actionEnv(env)
-    const artifactDir = join(required(env, 'RUNNER_TEMP'), 'release-tools-artifact')
-    if (mode === 'validate') await validate(a)
-    else if (mode === 'build') await build(a, required(env, 'RELEASE_TOOLS_STATE'), artifactDir)
-    else if (mode === 'publish') {
-      await publish(a, { artifactDir, tagObject: env.TAG_OBJECT ?? '', tarballSha512: env.TARBALL_SHA512 ?? '' })
-    } else throw new Error(`unknown mode ${mode}`)
-    return 0
   } catch (e) {
-    const result = e instanceof ActionResult ? e : e instanceof ReleaseError ? new ActionResult('invalid-tag', e.message) : null
-    const annotate = a?.annotate ?? ((/** @type {string} */ level, /** @type {string} */ code, /** @type {string} */ message) => {
-      process.stdout.write(`::${level} title=release-tools::${escapeData(`${code}: ${message}`)}\n`)
-    })
-    if (result) {
-      annotate(result.fail ? 'error' : 'notice', result.code, result.message)
-      if (!result.fail && mode === 'validate' && env.GITHUB_OUTPUT) outputWriter(env.GITHUB_OUTPUT)('release', 'false')
-      return result.fail ? 1 : 0
-    }
-    const code = mode === 'publish' ? 'publish-failed' : 'build-failed'
-    annotate('error', code, asMessage(e))
-    process.stderr.write(`${e instanceof Error ? e.stack : String(e)}\n`)
-    return 1
+    const result = e instanceof ActionResult ? e : null
+    process.stdout.write(`::${result && !result.fail ? 'notice' : 'error'} title=release-tools::${escapeData(`${result?.code ?? 'build-failed'}: ${asMessage(e)}`)}\n`)
+    if (result && !result.fail && env.GITHUB_OUTPUT) outputWriter(env.GITHUB_OUTPUT)('release', 'false')
+    return result && !result.fail ? 0 : 1
   }
+  const r = await runMode(mode, a, {
+    artifactDir: join(required(env, 'RUNNER_TEMP'), 'release-tools-artifact'),
+    statePath: env.RELEASE_TOOLS_STATE,
+    tagObject: env.TAG_OBJECT,
+    tarballSha512: env.TARBALL_SHA512,
+  })
+  if (!r.ok && r.error && !(r.error instanceof ActionResult)) process.stderr.write(`${r.error instanceof Error ? r.error.stack : String(r.error)}\n`)
+  return r.ok ? 0 : 1
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
