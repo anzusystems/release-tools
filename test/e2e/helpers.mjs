@@ -60,7 +60,7 @@ export async function resetSandbox(o = {}) {
   for (const p of await gh.pulls({ state: 'open' })) await gh.updatePull(p.number, { state: 'closed' })
   for (const r of await gh.releases()) await gh.deleteRelease(r.id)
   for (const t of await gh.tagRefs()) await gh.deleteTag(t.name)
-  for (const prefix of ['release/', 'hotfix/', 'release-merge/', 'docs/']) for (const b of await gh.branches(prefix)) await gh.deleteBranch(b.name)
+  for (const b of await gh.branches('')) if (b.name !== 'main') await gh.deleteBranch(b.name)
   for (const r of await gh.workflowRuns('release.yml').catch(() => [])) await gh.deleteRun(r.id).catch(() => {})
 
   const root = await mkdtemp(join(tmpdir(), 'release-tools-e2e-'))
