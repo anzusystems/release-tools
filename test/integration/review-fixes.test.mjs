@@ -829,3 +829,20 @@ test('the action interrupted right after npm publish: the command adds the GitHu
   assert.match(rel.body, /created-by: release-tools CLI/)
   assert.ok(await p.isAncestor('1.0.0^{commit}', 'main'))
 })
+
+test('two finals of the latest line tagged at the same moment: the run of the higher one waits for the lower one', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  await p.cli('publish', [FINAL], { cwd: await startRelease(p, '1.0.0', '1.0.0') })
+  const main = await p.sha('main')
+  // both passed the checks of the CLI before either was tagged
+  p.gh.autoRun = false
+  await p.gh.createApiTag('1.0.1', main, formatTagMessage({ kind: 'final', pr: 900, id: 'a' }), false)
+  await p.gh.createApiTag('1.1.0', main, formatTagMessage({ kind: 'final', pr: 901, id: 'b' }), false)
+  const higher = p.gh.runList.find((r) => r.headBranch === '1.1.0')
+  for (const r of p.gh.runList) if (r !== higher) r.hold = true
+  p.gh.autoRun = true
+  await p.gh.pump()
+  assert.match(higher.jobs.find((/** @type {any} */ j) => j.name === 'build').annotations[0].message, /^invalid-run: 1\.0\.1 is tagged and not released yet/)
+  assert.equal(p.registry.store.has('1.1.0'), false)
+})

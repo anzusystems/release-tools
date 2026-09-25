@@ -7,7 +7,7 @@ import { classifyVersion, toolTag } from '../lib/tags.mjs'
 import { lastStable, lastOfLine, isOlderLine, newerLines } from '../lib/versions.mjs'
 import { parseHeader, hasContent } from '../lib/changelog.mjs'
 import * as semver from '../lib/semver.mjs'
-import { ActionResult, classifyRunTag, releaseState, asMessage } from './common.mjs'
+import { ActionResult, classifyRunTag, releaseState, asMessage, lowerFinalPending } from './common.mjs'
 import { bootstrapOf } from '../lib/project.mjs'
 
 const HOUR = 60 * 60 * 1000
@@ -105,6 +105,8 @@ export async function validate(a) {
   const bootstrap = await isBootstrap(a, released)
 
   if (!alreadyReleased) {
+    const lower = kind === 'final' ? await lowerFinalPending(a.gh, version, released) : null
+    if (lower) throw new ActionResult('invalid-run', `${lower} is tagged and not released yet; the lower final goes first`)
     if (kind === 'final' || kind === 'hotfix') {
       if (pkg?.version !== version) throw new ActionResult('invalid-tag', `package.json has ${pkg?.version}, not ${version}`)
       if (changelog === null) throw new ActionResult('invalid-tag', `${changelogPath} is missing`)

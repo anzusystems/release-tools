@@ -8,7 +8,7 @@ import { withFooter, parseFooter } from '../lib/release-body.mjs'
 import { lastStable, lastOfLine, npmTagFor, isLatest } from '../lib/versions.mjs'
 import { MockRegistry } from '../lib/registry.mjs'
 import * as semver from '../lib/semver.mjs'
-import { ActionResult, SUPPORTED_ARTIFACT_SCHEMAS, currentTag, classifyRunTag, settingsFromMain, releaseState } from './common.mjs'
+import { ActionResult, SUPPORTED_ARTIFACT_SCHEMAS, currentTag, classifyRunTag, settingsFromMain, releaseState, lowerFinalPending } from './common.mjs'
 
 /**
  * Publish job: no checkout of the project, a fixed environment. Checks the artifact against the outputs of the
@@ -61,6 +61,8 @@ export async function publish(a, input) {
     if (kind === 'final' && last && !semver.gt(version, last)) {
       throw new ActionResult('invalid-run', `${version} is no longer higher than the last released stable version ${last}`)
     }
+    const lower = kind === 'final' ? await lowerFinalPending(a.gh, version, state.released) : null
+    if (lower) throw new ActionResult('invalid-run', `${lower} is tagged and not released yet; the lower final goes first`)
     if (kind === 'hotfix') {
       const base = lastOfLine(others, semver.line(version))
       if (!base || semver.bump(base, 'patch') !== version || !last || !semver.lt(version, last)) {

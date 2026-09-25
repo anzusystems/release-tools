@@ -5,6 +5,7 @@ import { parseConfig, repoSettings, CONFIG_FILE } from '../lib/config.mjs'
 import { ReleaseError } from '../lib/util.mjs'
 import { classifyVersion, toolTag } from '../lib/tags.mjs'
 import * as semver from '../lib/semver.mjs'
+import { isOlderLine } from '../lib/versions.mjs'
 
 /** Version of the artifact format between the build and the publish job. */
 export const ARTIFACT_SCHEMA = 1
@@ -155,6 +156,25 @@ export async function releaseState(settings, gh, registry) {
     return (await gh.releases()).some((r) => r.tagName === version)
   }
   return { released, releases, isReleased }
+}
+
+/**
+ * A lower final of the latest line that is tagged and not released: it goes first, since a higher final released
+ * before it would miss its changes. The CLI checks this before it tags; two finals tagged at the same moment both
+ * pass it, and the run of the higher one stops here.
+ * @param {import('../lib/github.mjs').GitHub} gh
+ * @param {string} version
+ * @param {Set<string>} released
+ * @returns {Promise<string | null>}
+ */
+export async function lowerFinalPending(gh, version, released) {
+  for (const t of await gh.tagRefs()) {
+    if (t.type !== 'tag' || t.name === version || released.has(t.name) || !semver.isStable(t.name) || !semver.lt(t.name, version)) continue
+    if (isOlderLine(t.name, released)) continue
+    const tag = await gh.tag(t.name)
+    if (tag && toolTag(tag)?.message.kind === 'final') return t.name
+  }
+  return null
 }
 
 /**
