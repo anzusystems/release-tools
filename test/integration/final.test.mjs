@@ -31,7 +31,7 @@ test('first final of a new project: start in bootstrap, publish, merge, clean up
   assert.ok(rel && !rel.draft && !rel.prerelease)
   assert.equal(p.gh.latestReleaseId, rel.id)
   assert.match(rel.body, /Something/)
-  assert.match(rel.body, /<!-- release-tools\ncommit: [0-9a-f]{40}\nrun-id: \d+\n-->/)
+  assert.match(rel.body, /<!-- release-tools\ncommit: [0-9a-f]{40}\nkind: final\nrun-id: \d+\n-->/)
   const tagCommit = await p.sha('1.0.0^{commit}')
   const parents = (await git(p.bare, ['log', '-1', '--format=%P', 'main'])).split(' ')
   assert.equal(parents[1], tagCommit, 'merged with a merge commit whose second parent is the tagged commit')
