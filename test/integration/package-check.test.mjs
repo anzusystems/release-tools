@@ -51,6 +51,21 @@ test('publishConfig with a registry or a tag is refused in the packed manifest',
   assert.equal(p.registry.store.size, 0)
 })
 
+test('an artifact in an unsupported format: the run is invalid, the tag is created again and built anew', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p)
+  p.gh.betweenJobs = async (r) => {
+    if (r.headBranch !== '1.0.0' || p.gh.betweenJobs === null) return
+    p.gh.betweenJobs = null
+    const meta = join(r.artifactDir, 'meta.json')
+    await writeFile(meta, JSON.stringify({ ...JSON.parse(await readFile(meta, 'utf8')), schema: 99 }))
+  }
+  await p.cli('publish', [pick(/^(final|finish) /)], { cwd: folder })
+  assert.ok(p.registry.store.has('1.0.0'))
+  assert.match(p.lastUi?.text() ?? '', /invalid-run/)
+})
+
 test('the version inside the package is set for prereleases and dev builds', async (t) => {
   const p = await setupProject({ version: '1.0.0' })
   t.after(() => p.dispose())
