@@ -98,6 +98,73 @@ test('cancel a hotfix: its branch on GitHub, its unreleased tag and its folder',
   assert.ok(p.exists(hf), '1.0.1 can be started again')
 })
 
+test('cancel deletes only what it checked: a branch pushed or a file changed during the question stays', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  await writeFile(join(folder, 'src/index.js'), 'export const x = 7\n')
+  const choose = { match: 'What do you want to start?', answer: (/** @type {any} */ c) => c.label.startsWith('release/1.0.0') }
+  // the same file changes again while the question is open
+  await assert.rejects(
+    p.cli('start', [
+      choose,
+      {
+        match: 'Throw all of that away?',
+        answer: async () => {
+          await writeFile(join(folder, 'src/index.js'), 'export const x = 8\n')
+          return true
+        },
+      },
+    ]),
+    /changed after it was checked/,
+  )
+  assert.ok(p.exists(folder), 'the folder stays')
+  assert.ok(await p.gh.branchSha('release/1.0.0'), 'the branch stays')
+  await git(folder, ['checkout', '--', 'src/index.js'])
+  // a local-only release: the branch appears on GitHub while the question is open
+  await git(p.bare, ['update-ref', '-d', 'refs/heads/release/1.0.0'])
+  await p.gh.sync()
+  await p.commit(folder, { 'src/local.js': 'local\n' }, 'local only', { push: false })
+  await assert.rejects(
+    p.cli('start', [
+      choose,
+      {
+        match: 'Throw all of that away?',
+        answer: async () => {
+          await git(folder, ['push', '--quiet', '--no-follow-tags', p.bare, 'HEAD:refs/heads/release/1.0.0'])
+          return true
+        },
+      },
+    ]),
+    /changed after it was checked/,
+  )
+  assert.ok(await p.gh.branchSha('release/1.0.0'), 'a branch that appeared meanwhile is never deleted')
+})
+
+test('deleting a leftover shows the commits of both the local and the remote branch', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  p.gh.afterRun = async (r) => {
+    if (r.headBranch !== '1.0.0') return
+    p.gh.afterRun = null
+    await p.commit(folder, { 'src/late.js': 'late\n' }, 'feat: late local', { push: false })
+    const side = join(p.root, 'side-leftover')
+    await git(p.root, ['clone', '--quiet', '-b', 'release/1.0.0', p.bare, side])
+    await git(side, ['-c', 'user.email=x@example.com', '-c', 'user.name=X', 'commit', '--quiet', '--allow-empty', '-m', 'feat: late remote'])
+    await git(side, ['push', '--quiet', 'origin', 'HEAD:refs/heads/release/1.0.0'])
+    await p.gh.sync()
+  }
+  await p.cli('publish', [{ match: 'What do you want to publish?', answer: (/** @type {any} */ c) => /^(final|finish) /.test(c.label) }], { cwd: folder }).catch(() => {})
+  await p.cli('start', [
+    { match: 'What do you want to start?', answer: (/** @type {any} */ c) => c.label.startsWith('release/1.0.0') },
+    { match: 'for good?', answer: false },
+  ])
+  const text = p.lastUi?.text() ?? ''
+  assert.match(text, /feat: late local/)
+  assert.match(text, /feat: late remote/)
+})
+
 test('the second final waits while the run of the first one is waiting', async (t) => {
   const p = await setupProject({ version: '1.0.0' })
   t.after(() => p.dispose())
