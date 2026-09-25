@@ -85,6 +85,35 @@ test('deleting a remote branch is refused when it moved (compare and delete)', a
   await assert.rejects(git(p.bare, ['rev-parse', '--verify', 'refs/heads/x']))
 })
 
+test('a dangling symbolic link changed during the question is noticed; a branch in use or moved is not deleted', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  const { symlinkSync, unlinkSync } = await import('node:fs')
+  symlinkSync('missing-a', join(folder, 'link'))
+  await assert.rejects(
+    p.cli('start', [
+      { match: 'What do you want to start?', answer: (/** @type {any} */ c) => c.label.startsWith('release/1.0.0') },
+      {
+        match: 'Throw all of that away?',
+        answer: async () => {
+          unlinkSync(join(folder, 'link'))
+          symlinkSync('missing-b', join(folder, 'link'))
+          return true
+        },
+      },
+    ]),
+    /changed after it was checked/,
+  )
+  assert.ok(p.exists(folder))
+  const g = new Git(p.work)
+  const head = await git(p.work, ['rev-parse', 'refs/heads/release/1.0.0'])
+  await assert.rejects(g.deleteBranch('release/1.0.0', head), /used by the folder/)
+  await git(p.work, ['branch', 'spare', 'main'])
+  await assert.rejects(g.deleteBranch('spare', head), /changed meanwhile/)
+  assert.ok(await git(p.work, ['rev-parse', '--verify', 'refs/heads/spare']))
+})
+
 test('cancel a hotfix after confirming its commits that were not pushed', async (t) => {
   const p = await setupProject({ version: '1.0.0' })
   t.after(() => p.dispose())
