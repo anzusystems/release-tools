@@ -33,6 +33,7 @@ export async function git(cwd, args) {
  * @property {string} [version] version in package.json
  * @property {boolean} [requireTestedPrerelease]
  * @property {Record<string, any>} [config] extra configuration
+ * @property {'npm' | 'pnpm' | 'yarn'} [pm]
  */
 
 /**
@@ -45,7 +46,8 @@ export async function setupProject(o = {}) {
   const work = join(root, 'work', 'pkg')
   await run('git', ['init', '--quiet', '--bare', '-b', 'main', bare])
   const registry = new FakeRegistry()
-  const gh = new FakeGitHub({ bare, repo: REPO, registry })
+  await mkdir(join(root, 'runs'))
+  const gh = new FakeGitHub({ bare, repo: REPO, registry, tmp: join(root, 'runs') })
   await gh.install()
   await mkdir(work, { recursive: true })
   await run('git', ['init', '--quiet', '-b', 'main', work])
@@ -63,14 +65,16 @@ export async function setupProject(o = {}) {
         repository: { type: 'git', url: `git+https://github.com/${REPO}.git` },
         files: ['dist'],
         scripts: { build: 'node build.mjs', test: 'node check.mjs' },
+        ...(o.pm === 'yarn' ? { packageManager: 'yarn@4.14.1' } : {}),
       },
       null,
       2,
     )}\n`,
+    ...(o.pm === 'yarn' ? { '.yarnrc.yml': 'nodeLinker: node-modules\nenableTelemetry: false\n' } : {}),
     'build.mjs': "import { mkdirSync, copyFileSync } from 'node:fs'\nmkdirSync('dist', { recursive: true })\ncopyFileSync('src/index.js', 'dist/index.js')\n",
     'check.mjs': "import { existsSync } from 'node:fs'\nif (existsSync('FAIL')) { console.error('check failed: FAIL exists'); process.exit(1) }\n",
     'src/index.js': 'export const x = 1\n',
-    '.gitignore': 'node_modules/\ndist/\n',
+    '.gitignore': 'node_modules/\ndist/\n.yarn/\n.pnp.*\n',
     'release.config.json': `${JSON.stringify(
       {
         version: 1,
@@ -92,7 +96,9 @@ export async function setupProject(o = {}) {
     await mkdir(dirname(join(work, p)), { recursive: true })
     await writeFile(join(work, p), content)
   }
-  await run('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: work })
+  if (o.pm === 'yarn') await run('corepack', ['yarn', 'install', '--mode=update-lockfile'], { cwd: work, extraEnv: { YARN_ENABLE_TELEMETRY: '0' } })
+  else if (o.pm === 'pnpm') await run('pnpm', ['install', '--lockfile-only'], { cwd: work })
+  else await run('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: work })
   await git(work, ['add', '-A'])
   await git(work, ['commit', '--quiet', '-m', 'initial'])
   await git(work, ['push', '--quiet', 'origin', 'main'])

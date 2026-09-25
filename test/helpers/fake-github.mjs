@@ -91,10 +91,11 @@ export class FakeRegistry {
 
 export class FakeGitHub {
   /**
-   * @param {{ bare: string, repo: string, login?: string, registry?: FakeRegistry, workflow?: string }} o
+   * @param {{ bare: string, repo: string, login?: string, registry?: FakeRegistry, workflow?: string, tmp?: string }} o
    */
   constructor(o) {
     this.bare = o.bare
+    this.tmp = o.tmp ?? null
     this.repo = o.repo
     const [owner, name] = o.repo.split('/')
     this.owner = owner
@@ -136,6 +137,8 @@ export class FakeGitHub {
     this.beforeRun = null
     /** @type {((run: any) => Promise<void>) | null} */
     this.betweenJobs = null
+    /** @type {((run: any) => Promise<void>) | null} */
+    this.afterRun = null
     this.env = { ...process.env }
   }
 
@@ -791,7 +794,7 @@ export class FakeGitHub {
 
   /** @param {any} r */
   async executeJobs(r) {
-    const temp = await mkdtemp(join(tmpdir(), `fake-run-${r.id}-`))
+    const temp = await mkdtemp(join(this.tmp ?? tmpdir(), `fake-run-${r.id}-`))
     const log = (/** @type {string} */ m) => r.log.push(m)
     const makeEnv = (/** @type {any} */ job, /** @type {string} */ workspace, /** @type {boolean} */ drafts) => {
       /** @type {any} */
@@ -867,6 +870,7 @@ export class FakeGitHub {
       }
       r.status = 'completed'
       r.conclusion = conclusion
+      if (this.afterRun) await this.afterRun(r)
     } catch (e) {
       r.status = 'completed'
       r.conclusion = 'failure'
