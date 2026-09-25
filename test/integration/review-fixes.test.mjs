@@ -125,6 +125,16 @@ test('a dangling symbolic link changed during the question is noticed; a branch 
   await git(other, ['checkout', '--quiet', '--detach', 'HEAD'])
   const bisected = await git(p.work, ['rev-parse', 'refs/heads/bisected'])
   await assert.rejects(g.deleteBranch('bisected', bisected), /used by the folder/)
+  // a folder whose path has a newline, rebasing the branch
+  await git(p.work, ['branch', 'rebased', 'main'])
+  const odd = join(p.root, 'odd\nfolder')
+  await git(p.work, ['worktree', 'add', '--quiet', odd, 'rebased'])
+  await writeFile(join(odd, 'r.txt'), 'r\n')
+  await git(odd, ['add', 'r.txt'])
+  await git(odd, ['commit', '--quiet', '-m', 'r'])
+  await run('git', ['rebase', '--quiet', '-x', 'false', 'HEAD~1'], { cwd: odd, allowFail: true, extraEnv: { GIT_EDITOR: 'true' } })
+  const rebased = await git(p.work, ['rev-parse', 'refs/heads/rebased'])
+  await assert.rejects(g.deleteBranch('rebased', rebased), /used by the folder/)
   // config of a deleted branch goes with it
   await git(p.work, ['branch', 'gone', 'main'])
   await git(p.work, ['config', 'branch.gone.description', 'x'])
