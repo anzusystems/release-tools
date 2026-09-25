@@ -211,7 +211,7 @@ async function checkNoNewerLine(a, git, version, released) {
   for (const versions of newerLines(version, released).values()) {
     for (const v of versions) {
       const t = await a.gh.tag(v)
-      if (!t) throw new ActionResult('invalid-tag', `${v} is released but has no tag, so the tagged commit cannot be checked against it`)
+      if (!t) throw new ActionResult('invalid-tag', `${v} is released but has no tag, so the tagged commit cannot be checked against it; restore the tag ${v} (release:publish offers it)`)
       if (await contains(git, t.commit, a.sha)) throw new ActionResult('invalid-tag', `the tagged commit contains ${v} of a newer line`)
     }
   }
