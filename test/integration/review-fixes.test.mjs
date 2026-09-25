@@ -638,3 +638,33 @@ test('conflict markers that come with the commits from GitHub stop the reopen of
   await assert.rejects(p.cli('publish', [FINAL, { match: 'was closed before', answer: 'reopen it' }], { cwd: folder }), /conflict markers are committed/)
   assert.equal(p.gh.pullList.find((x) => x.number === pr.number)?.state, 'closed')
 })
+
+test('runs of a foreign tag whose version is released while cleanup deletes them: no tag and no Release of the tool', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const head = await git(p.work, ['rev-parse', 'HEAD'])
+  await git(p.work, ['push', '--quiet', 'origin', 'HEAD:refs/tags/0.8.0'])
+  await p.gh.sync()
+  await p.gh.pump()
+  await git(p.work, ['push', '--quiet', 'origin', ':refs/tags/0.8.0'])
+  await p.gh.sync()
+  await p.gh.pump()
+  p.gh.offsetMs = 3 * 60 * 60 * 1000
+  const deleteRun = p.gh.deleteRun.bind(p.gh)
+  let released = false
+  p.gh.deleteRun = async (/** @type {number} */ id) => {
+    const r = p.gh.runList.find((x) => x.id === id)
+    await deleteRun(id)
+    if (!released && r?.headBranch === '0.8.0') {
+      released = true
+      p.registry.publish('0.8.0', Buffer.from('foreign'), 'latest', head)
+    }
+  }
+  await p.cli('cleanup', [
+    { match: 'What to delete?', answer: 'delete all' },
+    { match: 'Delete these', answer: true },
+  ]).catch(() => {})
+  assert.ok(released)
+  assert.equal(await p.gh.tag('0.8.0'), null)
+  assert.equal(p.gh.releaseList.some((r) => r.tagName === '0.8.0'), false)
+})
