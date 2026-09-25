@@ -131,6 +131,27 @@ test('hotfix of an older line: next patch from the tag, latest-X.Y, changelog pu
   assert.match(p.lastUi?.text() ?? '', /patch release/)
 })
 
+test('hotfix: an rc gets rc-X.Y, only the next patch of an older line with the tool can be started', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  await p.cli('publish', [FINAL], { cwd: await startRelease(p, '1.0.0', '1.0.0') })
+  await p.cli('publish', [FINAL], { cwd: await startRelease(p, 'minor', '1.1.0') })
+  const other = (/** @type {string} */ v) => [
+    { match: 'What do you want to start?', answer: 'other…' },
+    { match: 'Hotfix version', answer: v },
+  ]
+  await assert.rejects(p.cli('start', other('1.0.2')), /the next patch of 1\.0\.0/)
+  await assert.rejects(p.cli('start', other('1.1.1')), /latest line/)
+  await assert.rejects(p.cli('start', other('0.9.1')), /no version of the line 0\.9 is released/)
+  await p.cli('start', [{ match: 'What do you want to start?', answer: '1.0.0 → 1.0.1' }])
+  const hf = p.folder('hotfix/1.0.1')
+  await p.writeChangelog('hotfix/1.0.1', '1.0.1')
+  await p.cli('publish', [pick(/^rc/)], { cwd: hf })
+  assert.ok(p.registry.store.has('1.0.1-rc.1'))
+  assert.equal(p.registry.tags['rc-1.0'], '1.0.1-rc.1')
+  assert.equal(p.registry.tags.rc, undefined, 'rc is not taken by an older line')
+})
+
 test('a hotfix branch with main merged into it is refused before the tag', async (t) => {
   const p = await setupProject({ version: '1.0.0' })
   t.after(() => p.dispose())

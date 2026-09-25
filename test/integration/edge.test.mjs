@@ -63,6 +63,58 @@ test('a version without provenance: its commit is taken from the tag after confi
   assert.ok(await p.isAncestor('1.0.0^{commit}', 'main'))
 })
 
+test('released from another commit than its tag (a safety net): nothing is merged until the tag is moved after confirming', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  const other = await git(p.bare, ['rev-parse', 'main'])
+  p.gh.afterRun = async (r) => {
+    if (r.headBranch !== '1.0.0') return
+    p.gh.afterRun = null
+    const entry = p.registry.store.get('1.0.0')
+    if (entry) entry.commit = other
+  }
+  await assert.rejects(p.cli('publish', [FINAL, { match: /Move the tag 1\.0\.0 to/, answer: false }], { cwd: folder }), /does not point to the released commit/)
+  assert.match(p.lastUi?.text() ?? '', /was released from [0-9a-f]{12}, but its tag points to/)
+  const tag = await p.gh.tag('1.0.0')
+  assert.equal(await p.isAncestor(/** @type {string} */ (tag?.commit), 'main'), false, 'nothing merged')
+  assert.ok(p.gh.openPull('release/1.0.0'), 'the release pull request stays open')
+})
+
+test('a failed run older than 30 days cannot be re-run: the tag is created again on the same commit', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  p.registry.failPublish = 1
+  await assert.rejects(p.cli('publish', [FINAL, { match: 'Re-run the failed publishing job?', answer: false }], { cwd: folder }), /publishing job failed/)
+  p.gh.offsetMs = 31 * 24 * 60 * 60 * 1000
+  const first = await p.gh.tag('1.0.0')
+  await p.cli('publish', [FINAL], { cwd: folder })
+  assert.ok(p.registry.store.has('1.0.0'))
+  assert.notEqual((await p.gh.tag('1.0.0'))?.refSha, first?.refSha, 'a new tag object')
+  assert.equal((await p.gh.tag('1.0.0'))?.commit, first?.commit, 'on the same commit')
+})
+
+test('init interrupted after each file: running it again writes only what is missing', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  await git(p.work, ['rm', '--quiet', 'release.config.json', '.github/workflows/release.yml', 'doc/changelog/template.md'])
+  await git(p.work, ['commit', '--quiet', '-m', 'remove the tool'])
+  await git(p.work, ['push', '--quiet', 'origin', 'main'])
+  const answers = () => [
+    { match: 'Does the project publish to npm?', answer: 'yes, npm' },
+    { match: 'File name of the release workflow', answer: 'release.yml' },
+    { match: 'ci.checks', answer: 'npm test' },
+    { match: 'Node version', answer: '24' },
+  ]
+  await assert.rejects(p.cli('init', answers(), { failAt: 'init:release.config.json' }), /interrupted/)
+  const plan = /** @type {any[]} */ (await p.cli('init', answers()))
+  assert.deepEqual(
+    plan.map((x) => `${x.path}:${x.action}`),
+    ['.github/workflows/release.yml:done', 'release.config.json:done', 'package.json:write', 'doc/changelog/template.md:write', 'CHANGELOG.md:done'],
+  )
+})
+
 test('a commit with [skip ci] is never tagged', async (t) => {
   const p = await setupProject({ version: '1.0.0' })
   t.after(() => p.dispose())
