@@ -100,3 +100,17 @@ test('annotations that cannot be read are an error, never an empty list', async 
     await assert.rejects(gh.annotations(7), /404/)
   })
 })
+
+test('an empty repository: a ref is missing and a list of refs is empty (GitHub answers 409)', async () => {
+  const gh = new GitHub({ token: 't', repo: 'o/r', apiUrl: 'https://api.example.com' })
+  const original = globalThis.fetch
+  globalThis.fetch = /** @type {any} */ (
+    async () => new Response(JSON.stringify({ message: 'Git Repository is empty.', status: '409' }), { status: 409, headers: new Headers({ date: new Date().toUTCString() }) })
+  )
+  try {
+    assert.equal(await gh.branchSha('main'), null)
+    assert.deepEqual(await gh.tagRefs(), [])
+  } finally {
+    globalThis.fetch = original
+  }
+})
