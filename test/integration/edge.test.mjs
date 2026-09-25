@@ -107,6 +107,31 @@ test('a release pull request merged by hand before the release blocks new releas
   assert.equal((await p.gh.tag('1.1.0'))?.commit, (await p.gh.pull(p.gh.pullList.find((x) => x.head === 'release/1.1.0').number)).headSha)
 })
 
+test('merged by hand before the release and the checks fail: the fix goes through the release branch and a new pull request', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  await p.cli('publish', [FINAL], { cwd: await startRelease(p, '1.0.0', '1.0.0') })
+  const folder = await startRelease(p, 'minor', '1.1.0')
+  await p.commit(folder, { FAIL: 'x' }, 'break')
+  await assert.rejects(p.cli('publish', [FINAL], { cwd: folder, failAt: 'pull-request' }), /interrupted/)
+  await p.gh.mergeInto(p.gh.openPull('release/1.1.0'), 'merge', 'Merge pull request', 'someone')
+  const mainBefore = await git(p.work, ['rev-parse', 'refs/heads/main'])
+  const inMain = { match: 'What do you want to publish?', answer: (/** @type {any} */ c) => /main holds 1\.1\.0/.test(c.label) }
+  await p.cli('publish', [inMain, { match: 'Tag the code in main', answer: true }])
+  assert.equal(p.registry.store.has('1.1.0'), false, 'the checks failed')
+  assert.match(p.lastUi?.text() ?? '', /Put the fix into release\/1\.1\.0/)
+  assert.equal(await git(p.work, ['rev-parse', 'refs/heads/main']), mainBefore, 'the local main never moves')
+  await p.commit(folder, { FAIL: null }, 'fix the checks')
+  await p.cli('publish', [FINAL], { cwd: folder })
+  assert.ok(p.gh.openPull('release/1.1.0'), 'a new pull request with the fix')
+  await p.cli('publish', [FINAL], { cwd: folder })
+  assert.ok(p.registry.store.has('1.1.0'))
+  const tag = await p.gh.tag('1.1.0')
+  assert.equal(p.registry.store.get('1.1.0')?.commit, tag?.commit)
+  assert.ok(await p.isAncestor(/** @type {string} */ (tag?.commit), 'main'))
+  assert.equal(await git(p.work, ['rev-parse', 'refs/heads/main']), mainBefore, 'the local main never moves')
+})
+
 test('bootstrap with lightweight tags and releases of the old flow (publish: "none", like admin-dam)', async (t) => {
   const p = await setupProject({ version: '0.0.1', publish: 'none' })
   t.after(() => p.dispose())
