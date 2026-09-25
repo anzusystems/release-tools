@@ -3,6 +3,7 @@
 // Every module and data file is imported here, at start: npx keeps the package in a folder named after the
 // specification (not the version) and another run may replace it with a newer commit while this one waits.
 import { readFileSync, realpathSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { createContext } from '../lib/context.mjs'
 import { TerminalUI } from '../lib/ui.mjs'
 import { ReleaseError, DryRunStop, Interrupted } from '../lib/util.mjs'
@@ -113,6 +114,6 @@ async function main() {
   }
 }
 
-if (process.argv[1] && new URL(import.meta.url).pathname === realpathSync(process.argv[1])) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
   main().then((code) => process.exit(code))
 }
