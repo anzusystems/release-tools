@@ -846,3 +846,58 @@ test('two finals of the latest line tagged at the same moment: the run of the hi
   assert.match(higher.jobs.find((/** @type {any} */ j) => j.name === 'build').annotations[0].message, /^invalid-run: 1\.0\.1 is tagged and not released yet/)
   assert.equal(p.registry.store.has('1.1.0'), false)
 })
+
+test('provenance that cannot be read yet is not taken for no provenance', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  await p.cli('publish', [pick(/^rc/)], { cwd: folder })
+  p.gh.releaseList = p.gh.releaseList.filter((r) => r.tagName !== '1.0.0-rc.1')
+  p.registry.provenanceUnreadable = true
+  await assert.rejects(
+    p.cli('publish', [{ match: 'What do you want to publish?', answer: (/** @type {any} */ c) => /1\.0\.0-rc\.1 is released but its GitHub Release is missing/.test(c.label) }]),
+    /the provenance of 1\.0\.0-rc\.1 on npm could not be read yet/,
+  )
+  assert.equal(p.gh.releaseList.some((r) => r.tagName === '1.0.0-rc.1'), false)
+})
+
+test('a release branch switched to in the main folder: cancel stops before any change', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  await git(folder, ['push', '--quiet', 'origin', 'HEAD:refs/heads/release/1.0.0'])
+  const pr = await p.gh.createPull({ head: 'release/1.0.0', base: 'main', title: 'release: 1.0.0', body: '' })
+  await git(p.work, ['worktree', 'remove', folder])
+  await git(p.work, ['switch', '--quiet', 'release/1.0.0'])
+  await assert.rejects(p.cli('start', [{ match: 'What do you want to start?', answer: (/** @type {any} */ c) => c.label.startsWith('release/1.0.0') }]), /release\/1\.0\.0 is checked out in the main folder/)
+  assert.equal(p.gh.pullList.find((x) => x.number === pr.number)?.state, 'open')
+  assert.ok(await p.gh.branchSha('release/1.0.0'))
+})
+
+test('a prerelease with a changelog of headings only: the GitHub Release gets the branch and the commit', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  await p.cli('start', [{ match: 'What do you want to start?', answer: '1.0.0' }])
+  const folder = p.folder('release/1.0.0')
+  await p.cli('publish', [pick(/^rc/), { match: /changelog/i, answer: true }], { cwd: folder }).catch((e) => {
+    throw new Error(`${e.message}\n${e.uiLog ?? ''}`)
+  })
+  const rel = p.gh.releaseList.find((r) => r.tagName === '1.0.0-rc.1')
+  assert.ok(rel)
+  assert.doesNotMatch(rel.body, /^### /m)
+  assert.match(rel.body, new RegExp((await p.gh.tag('1.0.0-rc.1'))?.commit.slice(0, 7) ?? 'x'))
+})
+
+test('a re-run of the publishing job that fails again: the tag is created again (a new build)', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  p.registry.failPublish = 2
+  await p.cli('publish', [
+    FINAL,
+    { match: 'Re-run the failed publishing job?', answer: true },
+    { match: 'Create the tag 1.0.0 again on the same commit', answer: true },
+  ], { cwd: folder })
+  assert.ok(p.registry.store.has('1.0.0'))
+  assert.ok(await p.isAncestor('1.0.0^{commit}', 'main'))
+})

@@ -191,7 +191,7 @@ export async function validate(a) {
       alreadyReleased,
       settings,
       build,
-      changelogPath: changelog === null ? null : changelogPath,
+      changelogPath: changelog === null || !hasContent(changelog) ? null : changelogPath,
       packageManager: pkg?.packageManager ?? null,
     }),
   )

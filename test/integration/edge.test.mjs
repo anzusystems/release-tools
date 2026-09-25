@@ -110,7 +110,10 @@ test('a failed run older than 30 days cannot be re-run: the tag is created again
   t.after(() => p.dispose())
   const folder = await startRelease(p, '1.0.0', '1.0.0')
   p.registry.failPublish = 1
-  await assert.rejects(p.cli('publish', [FINAL, { match: 'Re-run the failed publishing job?', answer: false }], { cwd: folder }), /publishing job failed/)
+  await assert.rejects(
+    p.cli('publish', [FINAL, { match: 'Re-run the failed publishing job?', answer: false }, { match: 'Create the tag 1.0.0 again', answer: false }], { cwd: folder }),
+    /publishing job failed/,
+  )
   p.gh.offsetMs = 31 * 24 * 60 * 60 * 1000
   const first = await p.gh.tag('1.0.0')
   await p.cli('publish', [FINAL], { cwd: folder })

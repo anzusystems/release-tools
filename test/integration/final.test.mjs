@@ -195,6 +195,7 @@ test('release pull request squashed by hand before the tag: confirmed, tagged in
   assert.equal(tag.commit, await p.sha('main'), 'the squash commit in main is tagged')
   assert.match(tag.message ?? '', /confirmed-by: dev/)
   assert.ok(p.registry.store.has('1.0.0'))
+  assert.doesNotMatch(p.lastUi?.text() ?? '', /reached main without being in/, 'the squashed commits are in the release')
 })
 
 test('releases in the order of their versions; a lower final after a higher one stops before any change', async (t) => {

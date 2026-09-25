@@ -29,6 +29,8 @@ export class FakeRegistry {
     /** @type {Record<string, string>} */
     this.tags = {}
     this.provenance = true
+    /** the attestations cannot be read (npm answers, but not with provenance yet) */
+    this.provenanceUnreadable = false
     this.failPublish = 0
   }
 
@@ -56,6 +58,7 @@ export class FakeRegistry {
    * @param {string} version
    */
   async provenanceCommit(pkg, version) {
+    if (this.provenanceUnreadable) return undefined
     const v = this.store.get(version)
     if (!v) return undefined
     return v.commit
