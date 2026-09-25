@@ -539,7 +539,11 @@ export class FakeGitHub {
     if (c.base) p.base = c.base
     if (c.state === 'closed' && p.state === 'open') p.state = 'closed'
     if (c.state === 'open' && p.state === 'closed') {
-      if (!(await this.refSha(`refs/heads/${p.head}`))) throw new GitHubError('head branch is gone', 422, null)
+      const head = await this.refSha(`refs/heads/${p.head}`)
+      if (!head) throw new GitHubError('head branch is gone', 422, null)
+      // GitHub reopens only while the branch still contains the head the pull request was closed with.
+      const kept = await run('git', ['merge-base', '--is-ancestor', p.headSha, head], { cwd: this.bare, allowFail: true })
+      if (kept.code !== 0) throw new GitHubError('state cannot be changed. The head branch was force-pushed or recreated.', 422, null)
       p.state = 'open'
     }
     if (c.title) p.title = c.title
@@ -734,15 +738,19 @@ export class FakeGitHub {
     return this.runInfo(r)
   }
 
-  /** @param {number} runId */
-  async jobs(runId) {
+  /**
+   * @param {number} runId
+   * @param {{ all?: boolean }} [o]
+   */
+  async jobs(runId, o = {}) {
     const r = this.runList.find((x) => x.id === runId)
-    return (r?.jobs ?? []).map((/** @type {any} */ j) => ({ id: j.id, name: j.name, status: j.status, conclusion: j.conclusion }))
+    const jobs = [...(o.all ? (r?.oldJobs ?? []) : []), ...(r?.jobs ?? [])]
+    return jobs.map((/** @type {any} */ j) => ({ id: j.id, name: j.name, status: j.status, conclusion: j.conclusion }))
   }
 
   /** @param {number} jobId */
   async annotations(jobId) {
-    for (const r of this.runList) for (const j of r.jobs) if (j.id === jobId) return j.annotations
+    for (const r of this.runList) for (const j of [...(r.oldJobs ?? []), ...r.jobs]) if (j.id === jobId) return j.annotations
     return []
   }
 
@@ -854,7 +862,8 @@ export class FakeGitHub {
     try {
       let build = r.jobs.find((/** @type {any} */ j) => j.name === 'build')
       if (!build || build.conclusion !== 'success') {
-        r.jobs = r.jobs.filter((/** @type {any} */ j) => j.name !== 'build' && j.name !== 'publish')
+        r.oldJobs = [...(r.oldJobs ?? []), ...r.jobs]
+        r.jobs = []
         build = { id: this.nextId++, name: 'build', status: 'in_progress', conclusion: null, annotations: [], outputs: {} }
         r.jobs.push(build)
         const ws = join(temp, 'ws')
@@ -878,6 +887,7 @@ export class FakeGitHub {
       if (build.conclusion === 'success' && build.outputs.release === 'true') {
         const old = r.jobs.find((/** @type {any} */ j) => j.name === 'publish')
         if (!old || old.conclusion !== 'success') {
+          r.oldJobs = [...(r.oldJobs ?? []), ...r.jobs.filter((/** @type {any} */ j) => j.name === 'publish')]
           r.jobs = r.jobs.filter((/** @type {any} */ j) => j.name !== 'publish')
           const publish = { id: this.nextId++, name: 'publish', status: 'in_progress', conclusion: null, annotations: [], outputs: {} }
           r.jobs.push(publish)

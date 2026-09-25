@@ -2,7 +2,8 @@
 // Regression tests of the findings of the implementation reviews.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
+import { writeFile, readFile } from 'node:fs/promises'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { join } from 'node:path'
 import { setupProject, git } from '../helpers/project.mjs'
 import { Git } from '../../lib/git.mjs'
@@ -374,6 +375,12 @@ test('another content of the version on npm between the build and the publish jo
   assert.match(first.jobs.find((/** @type {any} */ j) => j.name === 'publish').annotations[0].message, /^integrity-mismatch: /)
   assert.equal(p.gh.releaseList.some((r) => r.tagName === '1.0.0'), false)
   assert.equal(await p.isAncestor('1.0.0^{commit}', 'main'), false, 'nothing merged')
+  // A re-run of the publish job cancelled before it reported anything: the earlier attempt still counts.
+  first.oldJobs = [...(first.oldJobs ?? []), ...first.jobs.filter((/** @type {any} */ j) => j.name === 'publish')]
+  first.jobs = [...first.jobs.filter((/** @type {any} */ j) => j.name !== 'publish'), { id: p.gh.nextId++, name: 'publish', status: 'completed', conclusion: 'cancelled', annotations: [], outputs: {} }]
+  first.attempt++
+  first.conclusion = 'cancelled'
+  await assert.rejects(p.cli('publish', [FINAL], { cwd: folder }), /another content than its release run built/)
   // The tag gone and restored by cleanup: its new run cannot compare the content and leaves the Release out too.
   const tag = await p.gh.tag('1.0.0')
   await git(p.bare, ['update-ref', '-d', 'refs/tags/1.0.0'])
@@ -421,16 +428,143 @@ test('runs of a foreign tag are no trace of the tool: nothing is restored, liste
   await git(p.work, ['push', '--quiet', 'origin', 'HEAD:refs/tags/0.9.0', 'HEAD:refs/tags/0.8.0'])
   await p.gh.sync()
   await p.gh.pump()
-  await git(p.work, ['push', '--quiet', 'origin', ':refs/tags/0.9.0', ':refs/tags/0.8.0'])
+  // 0.7.0: a lightweight tag moved to another commit before its first run looked at it
+  p.gh.autoRun = false
+  await git(p.work, ['push', '--quiet', 'origin', 'HEAD:refs/tags/0.7.0'])
+  await p.gh.sync()
+  const other = await git(p.work, ['commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'other'])
+  await git(p.work, ['push', '--quiet', '--force', 'origin', `${other}:refs/tags/0.7.0`])
+  await p.gh.sync()
+  p.gh.autoRun = true
+  await p.gh.pump()
+  const movedRun = p.gh.runList.find((r) => r.headBranch === '0.7.0' && r.headSha === head)
+  assert.match(movedRun.jobs.find((/** @type {any} */ j) => j.name === 'build').annotations[0].message, /^nothing: /)
+  await git(p.work, ['push', '--quiet', 'origin', ':refs/tags/0.9.0', ':refs/tags/0.8.0', ':refs/tags/0.7.0'])
   await p.gh.sync()
   await p.gh.pump()
-  const foreign = p.gh.runList.filter((r) => r.headBranch === '0.8.0').length
+  const count = () => p.gh.runList.filter((r) => ['0.8.0', '0.7.0'].includes(r.headBranch)).length
+  const foreign = count()
   assert.ok(foreign > 0)
   p.gh.offsetMs = 3 * 60 * 60 * 1000
   assert.deepEqual(await p.cli('cleanup', []), [])
   assert.equal(await p.gh.tag('0.9.0'), null, 'no tag of the tool for a foreign release')
   assert.equal(p.gh.releaseList.some((r) => r.tagName === '0.9.0'), false)
-  assert.equal(p.gh.runList.filter((r) => r.headBranch === '0.8.0').length, foreign, 'the foreign runs stay')
+  assert.equal(count(), foreign, 'the foreign runs stay')
   await assert.rejects(p.cli('publish', []), /no answer/)
   assert.doesNotMatch(p.lastUi?.text() ?? '', /0\.9\.0/)
+})
+
+test('another content on npm while its run is running: a second command waits for the run and adds no Release', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  /** @type {(v?: unknown) => void} */
+  let open = () => {}
+  const gate = new Promise((resolve) => {
+    open = resolve
+  })
+  let paused = false
+  p.gh.betweenJobs = async (r) => {
+    if (r.headBranch !== '1.0.0-rc.1' || paused) return
+    paused = true
+    p.registry.publish('1.0.0-rc.1', Buffer.from('another build'), 'next', r.headSha)
+    await gate
+  }
+  const first = p.cli('publish', [pick(/^rc/)], { cwd: folder })
+  while (!paused) await sleep(10)
+  const second = p.cli('publish', [pick(/1\.0\.0-rc\.1 is released but its GitHub Release is missing/)])
+  const secondUi = /** @type {any} */ (p.lastUi)
+  second.catch(() => {})
+  while (!secondUi.text().includes('waiting for the release run of 1.0.0-rc.1')) await sleep(10)
+  open()
+  await first
+  await assert.rejects(second, /another content than its release run built/)
+  assert.equal(p.gh.releaseList.some((r) => r.tagName === '1.0.0-rc.1'), false)
+})
+
+test('a release cancelled and started again with the same version is released; the old pull request stays closed', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  let folder = await startRelease(p, '1.0.0', '1.0.0')
+  await p.commit(folder, { FAIL: 'x' }, 'break')
+  await assert.rejects(p.cli('publish', [FINAL], { cwd: folder }), /nothing was published/)
+  const old = p.gh.pullList.find((x) => x.head === 'release/1.0.0')
+  await p.cli('start', [{ match: 'What do you want to start?', answer: (/** @type {any} */ c) => c.label.startsWith('release/1.0.0') }])
+  assert.equal(await p.gh.branchSha('release/1.0.0'), null)
+  folder = await startRelease(p, '1.0.0', '1.0.0')
+  await p.cli('publish', [FINAL], { cwd: folder })
+  assert.ok(p.registry.store.has('1.0.0'))
+  assert.ok(await p.isAncestor('1.0.0^{commit}', 'main'))
+  assert.equal(p.gh.pullList.find((x) => x.number === old.number)?.state, 'closed')
+})
+
+test('a pull request of the release branch merged by hand before the final commit does not block the version', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  await p.cli('publish', [FINAL], { cwd: await startRelease(p, '1.0.0', '1.0.0') })
+  const folder = await startRelease(p, 'minor', '1.1.0')
+  await git(folder, ['push', '--quiet', 'origin', 'HEAD:refs/heads/release/1.1.0'])
+  const early = await p.gh.createPull({ head: 'release/1.1.0', base: 'main', title: 'wip', body: '' })
+  await p.gh.mergeInto(p.gh.pullList.find((x) => x.number === early.number), 'merge', 'wip', 'colleague')
+  await p.cli('publish', [FINAL], { cwd: folder })
+  assert.ok(p.registry.store.has('1.1.0'))
+  assert.ok(await p.isAncestor('1.1.0^{commit}', 'main'))
+})
+
+test('uncommitted changes in the folder stop publish before anything changes on GitHub', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  await git(folder, ['push', '--quiet', 'origin', 'HEAD:refs/heads/release/1.0.0'])
+  await git(p.bare, ['branch', 'feature', 'main'])
+  const pr = await p.gh.createPull({ head: 'feature', base: 'release/1.0.0', title: 'feature', body: '' })
+  await writeFile(join(folder, 'src/index.js'), 'export const x = 2\n')
+  await assert.rejects(p.cli('publish', [FINAL, { match: 'targets release/1.0.0', answer: 'close it' }], { cwd: folder }), /uncommitted changes/)
+  assert.equal(p.gh.pullList.find((x) => x.number === pr.number)?.state, 'open')
+})
+
+test('main moving while the release pull request waits for its approval merges nothing new into the release', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  p.gh.settings.requireApproval = true
+  p.gh.settings.canBypass = false
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  let approvals = 0
+  let moved = false
+  const pull = p.gh.pull.bind(p.gh)
+  p.gh.pull = async (/** @type {number} */ n) => {
+    const pr = p.gh.pullList.find((x) => x.number === n)
+    if (pr?.state === 'open' && pr.base === 'main') {
+      if (!moved) {
+        moved = true
+        await p.changeMain()
+      }
+      const head = await p.gh.headOf(pr)
+      if (!pr.approvals.some((/** @type {any} */ a) => a.sha === head)) {
+        approvals++
+        await p.gh.approve(n, 'colleague')
+      }
+    }
+    return pull(n)
+  }
+  await p.cli('publish', [FINAL], { cwd: folder })
+  assert.equal(approvals, 1, 'approved once')
+  assert.ok(p.registry.store.has('1.0.0'))
+  assert.ok(await p.isAncestor('1.0.0^{commit}', 'main'))
+})
+
+test('a folder behind its branch on GitHub is fast-forwarded before the checks', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  await p.cli('start', [{ match: 'What do you want to start?', answer: '1.0.0' }])
+  const other = join(p.root, 'colleague')
+  await run('git', ['clone', '--quiet', '-b', 'release/1.0.0', p.bare, other])
+  await git(other, ['config', 'user.email', 'dev@example.com'])
+  await git(other, ['config', 'user.name', 'Dev'])
+  const f = join(other, 'doc/changelog/1.0.0.md')
+  await writeFile(f, (await readFile(f, 'utf8')).replace('### Added\n', '### Added\n\n- x\n'))
+  await git(other, ['commit', '--quiet', '-am', 'docs: changelog'])
+  await git(other, ['push', '--quiet', 'origin', 'HEAD:refs/heads/release/1.0.0'])
+  await p.cli('publish', [FINAL], { cwd: p.folder('release/1.0.0') })
+  assert.ok(p.registry.store.has('1.0.0'))
 })
