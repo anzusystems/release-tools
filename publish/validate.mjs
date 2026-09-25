@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { Git } from '../lib/git.mjs'
 import { parseConfig, repoSettings, buildSettings, CONFIG_FILE } from '../lib/config.mjs'
 import { classifyVersion, toolTag } from '../lib/tags.mjs'
-import { lastStable, lastOfLine, stableDesc, isOlderLine } from '../lib/versions.mjs'
+import { lastStable, lastOfLine, isOlderLine, newerLines } from '../lib/versions.mjs'
 import { parseHeader, hasContent } from '../lib/changelog.mjs'
 import * as semver from '../lib/semver.mjs'
 import { ActionResult, classifyRunTag, releaseState, asMessage } from './common.mjs'
@@ -163,11 +163,10 @@ export async function validate(a) {
       if (isOlderLine(info.core, released)) {
         // A prerelease of an older line is a prerelease of its hotfix: it contains the last release of its line.
         const base = lastOfLine(released, semver.line(info.core))
-        if (base) {
-          const baseTag = await a.gh.tag(base)
-          if (!baseTag || !(await contains(git, baseTag.commit, a.sha))) {
-            throw new ActionResult('invalid-tag', `the tagged commit does not contain ${base}, the last release of its line`)
-          }
+        if (!base) throw new ActionResult('invalid-tag', `no version of the line ${semver.line(info.core)} is released; a prerelease of an older line is a prerelease of its hotfix`)
+        const baseTag = await a.gh.tag(base)
+        if (!baseTag || !(await contains(git, baseTag.commit, a.sha))) {
+          throw new ActionResult('invalid-tag', `the tagged commit does not contain ${base}, the last release of its line`)
         }
         await checkNoNewerLine(a, git, info.core, released)
       }
@@ -209,19 +208,15 @@ export async function validate(a) {
  * @param {Set<string>} released
  */
 async function checkNoNewerLine(a, git, version, released) {
-  const lineOf = semver.line(version)
-  const [lm, ln] = lineOf.split('.').map(Number)
-  const firstOfLine = new Map()
-  for (const v of stableDesc(released)) {
-    const p = /** @type {semver.SemVer} */ (semver.parse(v))
-    if (p.major < lm || (p.major === lm && p.minor <= ln)) continue
-    firstOfLine.set(`${p.major}.${p.minor}`, v)
-  }
-  for (const v of firstOfLine.values()) {
-    const t = await a.gh.tag(v)
-    if (t && (await contains(git, t.commit, a.sha))) {
-      throw new ActionResult('invalid-tag', `the tagged commit contains ${v} of a newer line`)
+  for (const [line, versions] of newerLines(version, released)) {
+    let seen = false
+    for (const v of versions) {
+      const t = await a.gh.tag(v)
+      if (!t) continue
+      seen = true
+      if (await contains(git, t.commit, a.sha)) throw new ActionResult('invalid-tag', `the tagged commit contains ${v} of a newer line`)
     }
+    if (!seen) throw new ActionResult('invalid-tag', `no released version of the line ${line} has a tag, so the tagged commit cannot be checked against it`)
   }
 }
 
