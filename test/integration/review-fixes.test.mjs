@@ -757,3 +757,70 @@ test('a release pull request retargeted while the merge waits is not merged into
   assert.equal(await p.sha('refs/heads/develop'), develop, 'nothing merged into develop')
   assert.equal(p.gh.pullList.find((x) => x.head === 'release/1.0.0')?.state, 'open')
 })
+
+test('a released hotfix whose changelog never reached main is offered anywhere; a branch with later commits stays', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  await p.cli('publish', [FINAL], { cwd: await startRelease(p, '1.0.0', '1.0.0') })
+  await p.cli('publish', [FINAL], { cwd: await startRelease(p, 'minor', '1.1.0') })
+  await p.cli('start', [{ match: 'What do you want to start?', answer: '1.0.0 → 1.0.1' }])
+  const hf = p.folder('hotfix/1.0.1')
+  await p.commit(hf, { 'src/index.js': 'export const x = 101\n' }, 'fix: x')
+  await p.writeChangelog('hotfix/1.0.1', '1.0.1')
+  await assert.rejects(p.cli('publish', [FINAL], { cwd: hf, failAt: 'push-tag' }), /interrupted/)
+  await p.gh.pump()
+  assert.ok(p.registry.store.has('1.0.1'))
+  // a colleague adds a commit to the branch; this computer has no folder of it any more
+  const other = join(p.root, 'colleague')
+  await run('git', ['clone', '--quiet', '-b', 'hotfix/1.0.1', p.bare, other])
+  await git(other, ['config', 'user.email', 'dev@example.com'])
+  await git(other, ['config', 'user.name', 'Dev'])
+  await writeFile(join(other, 'src/later.js'), 'later\n')
+  await git(other, ['add', '-A'])
+  await git(other, ['commit', '--quiet', '-m', 'later'])
+  await git(other, ['push', '--quiet', 'origin', 'HEAD:refs/heads/hotfix/1.0.1'])
+  await git(p.work, ['worktree', 'remove', '--force', hf])
+  await git(p.work, ['branch', '-D', 'hotfix/1.0.1'])
+  await p.cli('publish', [{ match: 'What do you want to publish?', answer: (/** @type {any} */ c) => /the changelog of the hotfix 1\.0\.1 is not in main/.test(c.label) }])
+  assert.match(await git(p.bare, ['show', 'main:doc/changelog/1.0.1.md']), /1\.0\.1/)
+  assert.ok(await p.gh.branchSha('hotfix/1.0.1'), 'the branch with the later commit stays')
+})
+
+test('a disabled release workflow stops a final before anything changes; a tag without runs twice stops the command', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  p.gh.workflowStateValue = 'disabled_manually'
+  await assert.rejects(p.cli('publish', [FINAL], { cwd: folder }), /is disabled_manually on GitHub/)
+  assert.equal(await p.gh.tag('1.0.0'), null)
+  assert.equal(p.gh.pullList.length, 0)
+  p.gh.workflowStateValue = null
+  // the workflow runs on no tag (a trigger that does not match): the tag is created again once, then the command stops
+  const onRef = p.gh.onRefChange.bind(p.gh)
+  p.gh.onRefChange = async (/** @type {string} */ ref, /** @type {string} */ from, /** @type {string} */ to, /** @type {Date} */ at) => {
+    if (ref === 'refs/tags/1.0.0') return
+    return onRef(ref, from, to, at)
+  }
+  // the ten minutes the command waits for a run to start pass at once
+  const tagRuns = p.gh.tagRuns.bind(p.gh)
+  p.gh.tagRuns = async (/** @type {string} */ w, /** @type {string} */ n) => {
+    p.gh.offsetMs += 11 * 60 * 1000
+    return tagRuns(w, n)
+  }
+  await assert.rejects(p.cli('publish', [FINAL], { cwd: folder }), /again no release run started for the tag 1\.0\.0/)
+  assert.equal(p.registry.store.has('1.0.0'), false)
+})
+
+test('the action interrupted right after npm publish: the command adds the GitHub Release and merges', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  p.gh.actionFailAt = 'action-npm'
+  await p.cli('publish', [FINAL], { cwd: folder })
+  const run = p.gh.runList.find((r) => r.headBranch === '1.0.0')
+  assert.match(run.jobs.find((/** @type {any} */ j) => j.name === 'publish').annotations[0].message, /^publish-failed: interrupted at action-npm/)
+  const rel = p.gh.releaseList.find((r) => r.tagName === '1.0.0')
+  assert.ok(rel && !rel.draft)
+  assert.match(rel.body, /created-by: release-tools CLI/)
+  assert.ok(await p.isAncestor('1.0.0^{commit}', 'main'))
+})

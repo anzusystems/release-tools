@@ -80,6 +80,7 @@ export async function publish(a, input) {
       npmTag = npmTagFor({ version, kind: /** @type {any} */ (kind), distTags, released: others })
       await currentTagIs(a, input.tagObject)
       result = await publishToNpm(a, registry, { version, tgzPath, tgz, tag: npmTag })
+      a.checkpoint?.('action-npm')
     }
     // Released before (another run, or an earlier attempt of this job): only the package of this run counts.
     if (result === 'exists' && tgz) {
@@ -123,6 +124,7 @@ export async function publish(a, input) {
       latest,
       commit: a.sha,
     })
+    a.checkpoint?.('action-release')
     if (info.kind === 'dev' && tgzPath) await a.gh.uploadAsset(release.id, tgzPath)
     a.log(`created the GitHub Release ${tag.name}`)
   } else if (info.kind === 'dev' && tgzPath && !existing.assets.some((x) => x.name === meta.tarball)) {

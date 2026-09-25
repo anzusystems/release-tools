@@ -21,6 +21,8 @@ export const ENABLED = process.env.RELEASE_E2E === '1'
 export const REPO = process.env.RELEASE_E2E_REPO || 'anzusystems/release-tools-sandbox'
 /** The branch of release-tools whose action the sandbox uses; it must be pushed. */
 export const ACTION_REF = process.env.RELEASE_E2E_ACTION_REF || 'main'
+/** The file that marks the main of a sandbox the tests may reset. */
+const SANDBOX_MARK = '.release-tools-sandbox'
 
 process.env.RELEASE_TOOLS_REGISTRY = 'mock'
 
@@ -34,8 +36,16 @@ export async function git(cwd, args) {
 
 /** Creates the sandbox when it does not exist (public: environments with rules need a paid plan otherwise). */
 export async function ensureSandbox() {
+  // The reset deletes everything in the repository and force-pushes its main: never anything but a sandbox.
+  if (!/\/[\w.-]+-sandbox$/.test(REPO)) throw new Error(`${REPO} is not a sandbox (its name must end with -sandbox)`)
   const view = await run('gh', ['repo', 'view', REPO, '--json', 'name'], { allowFail: true })
-  if (view.code === 0) return
+  if (view.code === 0) {
+    const gh = new GitHub({ token: await ghToken(), repo: REPO })
+    if ((await gh.branchSha('main')) && (await gh.file(SANDBOX_MARK, 'main')) === null) {
+      throw new Error(`${REPO} has a main without ${SANDBOX_MARK}; it is not reset`)
+    }
+    return
+  }
   const created = await run('gh', ['repo', 'create', REPO, '--public', '--description', 'Sandbox of the end-to-end tests of anzusystems/release-tools'], { allowFail: true })
   if (created.code !== 0) throw new Error(`${REPO} does not exist and could not be created; create it by hand and set RELEASE_E2E_REPO`)
 }
@@ -85,6 +95,7 @@ export async function resetSandbox(o = {}) {
     }),
     'doc/changelog/template.md': DEFAULT_TEMPLATE,
     'CHANGELOG.md': '# Changelog\n\nSandbox.\n',
+    [SANDBOX_MARK]: 'The end-to-end tests of anzusystems/release-tools reset this repository.\n',
   }
   for (const [p, content] of Object.entries(files)) {
     await mkdir(dirname(join(work, p)), { recursive: true })

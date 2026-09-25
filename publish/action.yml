@@ -99,6 +99,11 @@ runs:
         RELEASE_TOOLS_STATE: ${{ steps.validate.outputs.state-file }}
       run: '"$TOOL_NODE" "$GITHUB_ACTION_PATH/main.mjs" build'
 
+    - name: Report the result of the build
+      if: always() && inputs.mode == 'build' && steps.validate.outputs.release == 'true'
+      shell: bash
+      run: '[ ! -f "$RUNNER_TEMP/release-tools-result" ] || cat "$RUNNER_TEMP/release-tools-result"'
+
     - name: Keep the package for the publish job
       if: inputs.mode == 'build' && steps.validate.outputs.release == 'true'
       uses: actions/upload-artifact@v4

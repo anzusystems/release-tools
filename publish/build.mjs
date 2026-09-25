@@ -120,6 +120,7 @@ export async function build(a, statePath, artifactDir) {
     JSON.stringify({ schema: ARTIFACT_SCHEMA, version: s.version, tag: s.tag, kind: s.kind, commit: a.sha, tarball, sha512 }, null, 2),
   )
   a.output('tarball-sha512', sha512 ?? '')
+  a.checkpoint?.('action-pack')
 }
 
 /**

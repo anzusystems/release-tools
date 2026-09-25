@@ -118,6 +118,10 @@ export class FakeGitHub {
     this.pumping = false
     this.artifactsExpired = false
     this.draftsVisible = true
+    /** @type {string | null} the state of the release workflow (null: active) */
+    this.workflowStateValue = null
+    /** @type {string | null} a checkpoint of the action that throws once */
+    this.actionFailAt = null
     this.settings = {
       mergeCommitAllowed: true,
       linearHistory: false,
@@ -781,6 +785,11 @@ export class FakeGitHub {
     r.rerun = true
   }
 
+  /** @param {string} workflow */
+  async workflowState(workflow) {
+    return this.workflowStateValue ?? 'active'
+  }
+
   /** @param {number} runId */
   async artifacts(runId) {
     const r = this.runList.find((x) => x.id === runId)
@@ -855,6 +864,12 @@ export class FakeGitHub {
           log(`${level}: ${code}: ${message}`)
         },
         log,
+        checkpoint: (/** @type {string} */ name) => {
+          if (this.actionFailAt === name) {
+            this.actionFailAt = null
+            throw new Error(`interrupted at ${name}`)
+          }
+        },
         env: this.env,
         npmPublish: async (/** @type {{ file: string, tag: string }} */ o) => this.registry.publish(r.headBranch, await readFile(o.file), o.tag, r.headSha),
       }

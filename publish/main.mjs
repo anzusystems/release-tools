@@ -10,11 +10,16 @@ import { validate } from './validate.mjs'
 import { build } from './build.mjs'
 import { publish } from './publish.mjs'
 
+/** The result of the build step, reported by a step of its own (see action.yml). */
+export const RESULT_FILE = 'release-tools-result'
+
 /**
  * @param {NodeJS.ProcessEnv} env
+ * @param {string} [mode] build: the result goes to RESULT_FILE, since the project's checks in the same step may use
+ *   up the annotations GitHub keeps per step
  * @returns {import('./common.mjs').ActionEnv}
  */
-export function actionEnv(env) {
+export function actionEnv(env, mode = '') {
   const repo = required(env, 'GITHUB_REPOSITORY')
   const gh = new GitHub({ token: required(env, 'GH_TOKEN'), repo })
   const outputFile = required(env, 'GITHUB_OUTPUT')
@@ -40,7 +45,13 @@ export function actionEnv(env) {
       if (summaryFile) appendFileSync(summaryFile, `${md}\n`)
     },
     annotate: (level, code, message) => {
-      process.stdout.write(`::${level} title=${escapeProperty('release-tools')}::${escapeData(`${code}: ${message}`)}\n`)
+      const line = `::${level} title=${escapeProperty('release-tools')}::${escapeData(`${code}: ${message}`)}\n`
+      if (mode === 'build') appendFileSync(join(required(env, 'RUNNER_TEMP'), RESULT_FILE), line)
+      else process.stdout.write(line)
+    },
+    checkpoint: (name) => {
+      // Controlled interruptions of the end-to-end tests; only with the mock registry.
+      if (env.RELEASE_TOOLS_REGISTRY === 'mock' && env.RELEASE_TOOLS_FAIL_AT === name) throw new Error(`interrupted at ${name} (RELEASE_TOOLS_FAIL_AT)`)
     },
     log: (m) => process.stdout.write(`${m}\n`),
     env: childEnv,
@@ -81,7 +92,7 @@ export async function runMode(mode, a, io) {
 export async function main(mode, env) {
   let a
   try {
-    a = actionEnv(env)
+    a = actionEnv(env, mode)
   } catch (e) {
     const result = e instanceof ActionResult ? e : null
     process.stdout.write(`::${result && !result.fail ? 'notice' : 'error'} title=release-tools::${escapeData(`${result?.code ?? 'unverified'}: ${asMessage(e)}`)}\n`)
