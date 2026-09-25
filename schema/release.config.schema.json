@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/anzusystems/release-tools/main/schema/release.config.schema.json",
+  "title": "release-tools project configuration",
+  "type": "object",
+  "required": ["version", "repo", "ci"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1, "description": "Schema version." },
+    "repo": { "type": "string", "pattern": "^[\\w.-]+/[\\w.-]+$", "description": "GitHub repository, owner/name. Read from origin/main." },
+    "package": { "type": "string", "description": "Package name; default: name from package.json. Read from origin/main." },
+    "publish": { "enum": ["npm", "none"], "default": "npm", "description": "npm, or none for projects released as GitHub Releases only. Read from origin/main." },
+    "releaseWorkflow": { "type": "string", "default": "release.yml", "description": "File name of the release workflow in .github/workflows. Read from origin/main." },
+    "changelogDir": { "type": "string", "default": "doc/changelog", "description": "Read from the built commit." },
+    "changelogTemplate": { "type": "string", "default": "doc/changelog/template.md", "description": "Read from the built commit." },
+    "changelogIndex": { "type": ["string", "null"], "default": null, "description": "Index file, e.g. CHANGELOG.md. Read from the built commit." },
+    "build": { "type": ["string", "boolean"], "description": "Build command; default: <package manager> run build; false: no build. Read from the built commit." },
+    "node": { "type": "string", "description": "Node version for the build; default: .nvmrc, then engines.node. Read from the built commit." },
+    "installScripts": { "type": "boolean", "default": false, "description": "Run install scripts in CI. Read from the built commit." },
+    "ci": {
+      "type": "object",
+      "required": ["checks"],
+      "properties": {
+        "env": { "type": "object", "additionalProperties": { "type": "string" } },
+        "setup": { "type": "array", "items": { "type": "string" } },
+        "checks": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+      }
+    },
+    "pack": {
+      "type": "object",
+      "properties": {
+        "verify": {
+          "type": "object",
+          "properties": {
+            "compare": { "type": "array", "items": { "type": "string" } },
+            "allow": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "requireTestedPrerelease": { "type": "boolean", "default": false, "description": "Read from origin/main." },
+    "worktree": {
+      "type": "object",
+      "properties": {
+        "copy": { "type": "array", "items": { "type": "string" }, "description": "Read from origin/main." },
+        "install": { "type": ["string", "array"], "items": { "type": "string" }, "description": "Read from the commit of the folder." }
+      }
+    },
+    "npmEnvironment": { "type": "string", "default": "npmjs-publish", "description": "Read from origin/main." }
+  }
+}

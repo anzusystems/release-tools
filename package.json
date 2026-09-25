@@ -1,0 +1,35 @@
+{
+  "name": "@anzusystems/release-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Release flow for anzusystems projects: release branches, prereleases, dev builds and hotfixes, published from pushed version tags by GitHub Actions",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anzusystems/release-tools.git"
+  },
+  "type": "module",
+  "bin": {
+    "release-tools": "bin/release.mjs"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "publish",
+    "schema"
+  ],
+  "engines": {
+    "node": ">=22.14"
+  },
+  "scripts": {
+    "test": "npm run typecheck && npm run test:unit && npm run test:integration",
+    "test:unit": "node --test --test-concurrency=4 \"test/unit/**/*.test.mjs\"",
+    "test:integration": "node --test --test-concurrency=2 --test-timeout=600000 \"test/integration/**/*.test.mjs\"",
+    "test:e2e": "node --test --test-concurrency=1 --test-timeout=3600000 \"test/e2e/**/*.test.mjs\"",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "~5.9.3"
+  }
+}
