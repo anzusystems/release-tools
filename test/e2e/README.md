@@ -12,4 +12,4 @@ RELEASE_E2E=1 RELEASE_E2E_ACTION_REF=<pushed branch of release-tools> npm run te
 - Before every scenario the sandbox is reset: `main` is force-pushed with the sample project, and all other branches, tags, Releases, runs and open pull requests are deleted.
 - `KEEP_TEST_REPOS=1` keeps the local clones.
 
-Status: the harness and two scenarios exist; they have not been run yet, and the full matrix of the plan is still to be written.
+Status: the two scenarios pass on real GitHub (anzusystems/release-tools-sandbox, 25 September 2026); the full matrix of the plan is still to be written.
