@@ -134,6 +134,8 @@ export class FakeGitHub {
     this.calls = []
     /** @type {((run: any) => void) | null} */
     this.beforeRun = null
+    /** @type {((run: any) => Promise<void>) | null} */
+    this.betweenJobs = null
     this.env = { ...process.env }
   }
 
@@ -757,6 +759,7 @@ export class FakeGitHub {
   /** Runs all queued runs in order (FIFO), unless autoRun is off. */
   async pump() {
     if (!this.autoRun || this.pumping) return
+    await this.sync()
     this.pumping = true
     try {
       for (;;) {
@@ -840,6 +843,7 @@ export class FakeGitHub {
         build.conclusion = res.ok ? 'success' : 'failure'
       }
       let conclusion = build.conclusion
+      if (this.betweenJobs) await this.betweenJobs(r)
       if (build.conclusion === 'success' && build.outputs.release === 'true') {
         const old = r.jobs.find((/** @type {any} */ j) => j.name === 'publish')
         if (!old || old.conclusion !== 'success') {

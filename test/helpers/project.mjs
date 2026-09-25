@@ -171,7 +171,7 @@ export class TestProject {
     await git(dir, ['commit', '--quiet', '-m', message])
     if (o.push !== false) {
       const branch = await git(dir, ['symbolic-ref', '--short', 'HEAD'])
-      await git(dir, ['push', '--quiet', 'origin', `HEAD:refs/heads/${branch}`])
+      await git(dir, ['push', '--quiet', '--no-follow-tags', 'origin', `HEAD:refs/heads/${branch}`])
     }
     await this.gh.sync()
     return git(dir, ['rev-parse', 'HEAD'])
@@ -189,11 +189,15 @@ export class TestProject {
     const current = await readFile(path, 'utf8')
     await writeFile(path, current.replace('### Added\n', `### Added\n\n${text}\n`))
     await git(dir, ['commit', '--quiet', '-am', `docs: changelog ${version}`])
-    await git(dir, ['push', '--quiet', 'origin', `HEAD:refs/heads/${branch}`])
+    await git(dir, ['push', '--quiet', '--no-follow-tags', 'origin', `HEAD:refs/heads/${branch}`])
     await this.gh.sync()
   }
 
-  /** A change merged into main by a normal pull request (outside the package). */
+  /**
+   * A change merged into main by a normal pull request (outside the package).
+   * @param {Record<string, string>} [files]
+   * @param {string} [message]
+   */
   async changeMain(files = { 'doc/notes.md': `notes ${Date.now()}\n` }, message = 'docs: notes') {
     const tmp = join(this.root, `side-${Date.now()}-${Math.random().toString(16).slice(2)}`)
     await run('git', ['clone', '--quiet', this.bare, tmp])
