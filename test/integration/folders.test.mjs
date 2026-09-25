@@ -48,8 +48,8 @@ test('a folder removed by hand is created again from its branch; outside the fol
   const p = await setupProject({ version: '1.0.0' })
   t.after(() => p.dispose())
   const folder = await startRelease(p, '1.0.0', '1.0.0')
+  // deleted by hand, without `git worktree prune`
   await rm(folder, { recursive: true, force: true })
-  await git(p.work, ['worktree', 'prune'])
   await p.cli('publish', [
     { match: 'What do you want to publish?', answer: (/** @type {any} */ c) => c.label === 'release/1.0.0' },
     { match: 'release/1.0.0', answer: (/** @type {any} */ c) => c.label.startsWith('final') },

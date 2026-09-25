@@ -237,6 +237,70 @@ test('merged by hand before the release: the checks of a final run on the merged
   assert.equal(await p.gh.tag('1.1.0'), null)
 })
 
+test('the tag of the last released version is missing: no return to bootstrap, nothing starts until it is finished', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  await p.cli('publish', [FINAL], { cwd: await startRelease(p, '1.0.0', '1.0.0') })
+  const folder = await startRelease(p, 'minor', '1.1.0')
+  await assert.rejects(p.cli('publish', [FINAL], { cwd: folder, failAt: 'push-tag' }), /interrupted/)
+  await p.gh.pump()
+  assert.ok(p.registry.store.has('1.1.0'), 'released, not merged')
+  const commit = (await p.gh.tag('1.1.0'))?.commit
+  await git(p.bare, ['update-ref', '-d', 'refs/tags/1.1.0'])
+  await p.gh.onRefChange('refs/tags/1.1.0', 'x', '0'.repeat(40), p.gh.now())
+  p.gh.releaseList = p.gh.releaseList.filter((r) => r.tagName !== '1.1.0')
+  await assert.rejects(p.cli('start', [{ match: 'What do you want to start?', answer: 'patch' }]), /released but not merged|not a choice/)
+  await p.cli('publish', [FINAL], { cwd: folder })
+  assert.equal((await p.gh.tag('1.1.0'))?.commit, commit, 'the tag is restored on the released commit')
+  assert.ok(await p.isAncestor(/** @type {string} */ (commit), 'main'))
+})
+
+test('a run that failed before its jobs started stops the final instead of moving the tag', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  p.gh.execute = async (r) => {
+    r.status = 'completed'
+    r.conclusion = 'startup_failure'
+  }
+  await assert.rejects(p.cli('publish', [FINAL], { cwd: folder }), /failed before its jobs started/)
+  assert.equal(p.gh.runList.filter((r) => r.headBranch === '1.0.0' && !r.deleted).length, 1, 'the tag was not moved')
+})
+
+test('a prerelease with [skip ci] in the local commit refuses before pushing', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  const before = await p.gh.branchSha('release/1.0.0')
+  await p.commit(folder, { 'src/b.js': 'b\n' }, 'chore: b [skip ci]', { push: false })
+  await assert.rejects(p.cli('publish', [pick(/^beta/)], { cwd: folder }), /skips the release run/)
+  assert.equal(await p.gh.branchSha('release/1.0.0'), before, 'nothing was pushed')
+})
+
+test('the final commit adds a missing index file', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  await git(p.work, ['rm', '--quiet', 'CHANGELOG.md'])
+  await git(p.work, ['commit', '--quiet', '-m', 'no index yet'])
+  await git(p.work, ['push', '--quiet', 'origin', 'main'])
+  await p.cli('publish', [FINAL], { cwd: await startRelease(p, '1.0.0', '1.0.0') })
+  assert.match(await p.show('main', 'CHANGELOG.md'), /- \[1\.0\.0\]/)
+})
+
+test('a copied file changed in the release folder is not deleted silently', async (t) => {
+  const p = await setupProject({ version: '1.0.0', config: { worktree: { copy: ['.env.local'] } } })
+  t.after(() => p.dispose())
+  await writeFile(join(p.work, '.gitignore'), 'node_modules/\ndist/\n.yarn/\n.pnp.*\n.env.local\n')
+  await p.commit(p.work, {}, 'chore: ignore .env.local')
+  await writeFile(join(p.work, '.env.local'), 'A=1\n')
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  await writeFile(join(folder, '.env.local'), 'A=2\n')
+  await p.cli('publish', [FINAL, { match: 'Delete them together with the folder?', answer: false }], { cwd: folder })
+  assert.ok(p.registry.store.has('1.0.0'))
+  assert.match(p.lastUi?.text() ?? '', /\.env\.local/)
+  assert.ok(p.exists(join(folder, '.env.local')), 'the folder with the changed copy stays')
+})
+
 test('cleanup races a release: the tag is restored and the Release is published as Latest', async (t) => {
   const p = await setupProject({ version: '1.0.0' })
   t.after(() => p.dispose())

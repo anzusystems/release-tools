@@ -8,6 +8,7 @@ import { lastStable, lastOfLine, stableDesc, isOlderLine } from '../lib/versions
 import { parseHeader, hasContent } from '../lib/changelog.mjs'
 import * as semver from '../lib/semver.mjs'
 import { ActionResult, currentTag, classifyRunTag, releaseState } from './common.mjs'
+import { bootstrapOf } from '../lib/project.mjs'
 
 const HOUR = 60 * 60 * 1000
 const FIVE_MINUTES = 5 * 60 * 1000
@@ -223,12 +224,7 @@ async function checkNoNewerLine(a, git, version, released) {
  * @param {Set<string>} released
  */
 async function isBootstrap(a, released) {
-  const last = lastStable(released)
-  if (!last) return true
-  const tag = await a.gh.tag(last)
-  if (!tag) return true
-  const t = toolTag(tag)
-  return !(t && (t.message.kind === 'final' || t.message.kind === 'hotfix'))
+  return bootstrapOf(a.gh, released)
 }
 
 /**
