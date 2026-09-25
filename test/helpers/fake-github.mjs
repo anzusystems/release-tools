@@ -352,6 +352,26 @@ export class FakeGitHub {
       })
   }
 
+  /**
+   * @param {string} name
+   * @param {string} commit
+   * @param {string} message
+   * @param {boolean} force
+   * @param {{ name: string, email: string, date: Date }} [tagger]
+   */
+  async createApiTag(name, commit, message, force = false, tagger) {
+    this.mutate(`create the tag ${name} through the API`)
+    await this.sync()
+    const t = tagger ?? { name: this.login, email: `${this.login}@example.com`, date: this.now() }
+    const content = `object ${commit}\ntype commit\ntag ${name}\ntagger ${t.name} <${t.email}> ${Math.floor(t.date.getTime() / 1000)} +0000\n\n${message}`
+    const sha = (await run('git', ['mktag'], { cwd: this.bare, input: content })).stdout.trim()
+    const old = await this.refSha(`refs/tags/${name}`)
+    if (old && !force) throw new GitHubError('Reference already exists', 422, null)
+    await git(this.bare, ['update-ref', `refs/tags/${name}`, sha])
+    await this.onRefChange(`refs/tags/${name}`, old ?? '0'.repeat(40), sha, this.now())
+    return sha
+  }
+
   /** @param {string} name */
   async deleteTag(name) {
     this.mutate(`delete the tag ${name}`)

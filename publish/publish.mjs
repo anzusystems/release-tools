@@ -113,7 +113,7 @@ export async function publish(a, input) {
     release = await a.gh.createRelease({
       tag: tag.name,
       name: tag.name,
-      body: withFooter(body, { commit: a.sha, runId: a.runId }),
+      body: withFooter(body, { commit: a.sha, runId: a.runId, kind }),
       prerelease,
       latest,
       commit: a.sha,

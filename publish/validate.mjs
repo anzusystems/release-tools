@@ -5,7 +5,7 @@ import { Git } from '../lib/git.mjs'
 import { parseConfig, repoSettings, buildSettings, CONFIG_FILE } from '../lib/config.mjs'
 import { classifyVersion, toolTag } from '../lib/tags.mjs'
 import { lastStable, lastOfLine, stableDesc, isOlderLine } from '../lib/versions.mjs'
-import { parseHeader } from '../lib/changelog.mjs'
+import { parseHeader, hasContent } from '../lib/changelog.mjs'
 import * as semver from '../lib/semver.mjs'
 import { ActionResult, currentTag, classifyRunTag, releaseState } from './common.mjs'
 
@@ -103,6 +103,7 @@ export async function validate(a) {
       if (changelog === null) throw new ActionResult('invalid-tag', `${changelogPath} is missing`)
       const header = parseHeader(changelog)
       if (!header || header.version !== version) throw new ActionResult('invalid-tag', `${changelogPath} has no header for ${version}`)
+      if (!hasContent(changelog)) throw new ActionResult('invalid-tag', `${changelogPath} has nothing but headings`)
       if (settings.requireTestedPrerelease) {
         if (!message.candidate) throw new ActionResult('invalid-tag', `requireTestedPrerelease is on, but the tag has no candidate`)
         const c = classifyVersion(message.candidate)

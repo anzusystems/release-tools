@@ -172,6 +172,71 @@ test('cancel a hotfix after confirming its commits that were not pushed', async 
   assert.equal(await p.gh.branchSha('hotfix/1.0.1'), null)
 })
 
+test('the tag of a released hotfix is restored on another computer that lacks its commit, still as a hotfix', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  await p.cli('publish', [FINAL], { cwd: await startRelease(p, '1.0.0', '1.0.0') })
+  await p.cli('publish', [FINAL], { cwd: await startRelease(p, 'minor', '1.1.0') })
+  await p.cli('start', [{ match: 'What do you want to start?', answer: '1.0.0 → 1.0.1' }])
+  const hf = p.folder('hotfix/1.0.1')
+  await p.commit(hf, { 'src/index.js': 'export const x = 101\n' }, 'fix: x')
+  await p.writeChangelog('hotfix/1.0.1', '1.0.1')
+  await p.cli('publish', [FINAL], { cwd: hf })
+  const released = /** @type {any} */ (p.registry.store.get('1.0.1')).commit
+  // the tag is lost; the hotfix commit is reachable from no ref any more
+  await git(p.bare, ['update-ref', '-d', 'refs/tags/1.0.1'])
+  await p.gh.onRefChange('refs/tags/1.0.1', released, '0'.repeat(40), p.gh.now())
+  const fresh = join(p.root, 'work', 'fresh')
+  // --no-local: only the objects reachable from refs, like a clone from GitHub
+  await git(p.root, ['clone', '--quiet', '--no-local', p.bare, fresh])
+  await git(fresh, ['config', 'user.email', 'dev@example.com'])
+  await git(fresh, ['config', 'user.name', 'Dev'])
+  // protocol v0 refuses objects no ref advertises: the case GitHub does not serve the commit
+  await git(fresh, ['config', 'protocol.version', '0'])
+  assert.equal((await run('git', ['cat-file', '-e', released], { cwd: fresh, allowFail: true })).code === 0, false, 'the clone lacks the commit')
+  const apiTag = p.gh.createApiTag.bind(p.gh)
+  let throughApi = 0
+  p.gh.createApiTag = async (...args) => {
+    throughApi++
+    return apiTag(...args)
+  }
+  await p.cli('publish', [{ match: 'What do you want to publish?', answer: (/** @type {any} */ c) => /1\.0\.1 is released but its tag is missing/.test(c.label) }], { cwd: fresh })
+  assert.equal(throughApi, 1, 'created through the API, since GitHub does not serve the commit')
+  const tag = await p.gh.tag('1.0.1')
+  assert.equal(tag?.commit, released, 'on the released commit')
+  assert.match(tag?.message ?? '', /release-tools: hotfix/)
+  assert.equal(p.gh.pullList.some((x) => x.head === 'release-merge/1.0.1'), false, 'no merge of the old line into main')
+})
+
+test('a prerelease on npm without a tag and a Release (an interrupted cleanup) is restored by cleanup', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  await p.cli('publish', [pick(/^rc/)], { cwd: folder })
+  const commit = /** @type {any} */ (p.registry.store.get('1.0.0-rc.1')).commit
+  await git(p.bare, ['update-ref', '-d', 'refs/tags/1.0.0-rc.1'])
+  await p.gh.onRefChange('refs/tags/1.0.0-rc.1', commit, '0'.repeat(40), p.gh.now())
+  p.gh.releaseList = p.gh.releaseList.filter((r) => r.tagName !== '1.0.0-rc.1')
+  await p.cli('cleanup', [])
+  assert.equal((await p.gh.tag('1.0.0-rc.1'))?.commit, commit)
+  assert.ok(p.gh.releaseList.find((r) => r.tagName === '1.0.0-rc.1' && !r.draft && r.prerelease))
+})
+
+test('merged by hand before the release: the checks of a final run on the merged code (another unreleased changelog)', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  await p.cli('publish', [FINAL], { cwd: await startRelease(p, '1.0.0', '1.0.0') })
+  const folder = await startRelease(p, 'minor', '1.1.0')
+  await assert.rejects(p.cli('publish', [FINAL], { cwd: folder, failAt: 'pull-request' }), /interrupted/)
+  await p.commit(folder, { 'doc/changelog/1.2.0.md': '1.2.0 — unreleased\n===\n\n- later\n' }, 'docs: 1.2.0')
+  await p.gh.mergeInto(p.gh.openPull('release/1.1.0'), 'merge', 'Merge pull request', 'someone')
+  await assert.rejects(
+    p.cli('publish', [{ match: 'What do you want to publish?', answer: (/** @type {any} */ c) => /main holds 1\.1\.0/.test(c.label) }, { match: 'Tag the code in main', answer: true }]),
+    /changelog of another unreleased version/,
+  )
+  assert.equal(await p.gh.tag('1.1.0'), null)
+})
+
 test('cleanup races a release: the tag is restored and the Release is published as Latest', async (t) => {
   const p = await setupProject({ version: '1.0.0' })
   t.after(() => p.dispose())
