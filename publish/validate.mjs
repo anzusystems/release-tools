@@ -145,7 +145,17 @@ export async function validate(a) {
     } else if (kind === 'prerelease') {
       if (info.kind !== 'prerelease') throw new ActionResult('invalid-tag', `${version} is not a prerelease`)
       if (await state.isReleased(info.core)) throw new ActionResult('invalid-tag', `${info.core} is already released`)
-      if (isOlderLine(info.core, released)) await checkNoNewerLine(a, git, info.core, released)
+      if (isOlderLine(info.core, released)) {
+        // A prerelease of an older line is a prerelease of its hotfix: it contains the last release of its line.
+        const base = lastOfLine(released, semver.line(info.core))
+        if (base) {
+          const baseTag = await a.gh.tag(base)
+          if (!baseTag || !(await contains(git, baseTag.commit, a.sha))) {
+            throw new ActionResult('invalid-tag', `the tagged commit does not contain ${base}, the last release of its line`)
+          }
+        }
+        await checkNoNewerLine(a, git, info.core, released)
+      }
     } else if (kind === 'dev') {
       if (info.kind !== 'dev') throw new ActionResult('invalid-tag', `${version} is not a dev build version`)
     }
