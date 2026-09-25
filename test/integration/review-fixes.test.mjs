@@ -381,6 +381,15 @@ test('another content of the version on npm between the build and the publish jo
   first.attempt++
   first.conclusion = 'cancelled'
   await assert.rejects(p.cli('publish', [FINAL], { cwd: folder }), /another content than its release run built/)
+  // Annotations that cannot be read are never "no mismatch".
+  const annotations = p.gh.annotations.bind(p.gh)
+  p.gh.annotations = async () => {
+    throw new Error('annotations: 502 Bad Gateway')
+  }
+  await assert.rejects(p.cli('publish', [FINAL], { cwd: folder }), /502 Bad Gateway/)
+  p.gh.annotations = annotations
+  assert.equal(p.gh.releaseList.some((r) => r.tagName === '1.0.0'), false)
+  assert.equal(await p.isAncestor('1.0.0^{commit}', 'main'), false)
   // The tag gone and restored by cleanup: its new run cannot compare the content and leaves the Release out too.
   const tag = await p.gh.tag('1.0.0')
   await git(p.bare, ['update-ref', '-d', 'refs/tags/1.0.0'])

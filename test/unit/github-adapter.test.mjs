@@ -93,3 +93,10 @@ test('a POST refused as existing after a failed attempt returns what the failed 
     else process.env.RELEASE_TOOLS_POLL_MS = poll
   }
 })
+
+test('annotations that cannot be read are an error, never an empty list', async () => {
+  const gh = new GitHub({ token: 't', repo: 'o/r', apiUrl: 'https://api.example.com' })
+  await withFetch({}, async () => {
+    await assert.rejects(gh.annotations(7), /404/)
+  })
+})
