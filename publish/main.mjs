@@ -84,7 +84,7 @@ export async function main(mode, env) {
     a = actionEnv(env)
   } catch (e) {
     const result = e instanceof ActionResult ? e : null
-    process.stdout.write(`::${result && !result.fail ? 'notice' : 'error'} title=release-tools::${escapeData(`${result?.code ?? 'build-failed'}: ${asMessage(e)}`)}\n`)
+    process.stdout.write(`::${result && !result.fail ? 'notice' : 'error'} title=release-tools::${escapeData(`${result?.code ?? 'unverified'}: ${asMessage(e)}`)}\n`)
     if (result && !result.fail && env.GITHUB_OUTPUT) outputWriter(env.GITHUB_OUTPUT)('release', 'false')
     return result && !result.fail ? 0 : 1
   }

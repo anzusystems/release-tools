@@ -143,7 +143,7 @@ A name starts with a letter, may contain letters, digits and hyphens, and must n
 ❯ delete all
   delete those older than … days
 ```
-It shows what it will delete and asks for confirmation. It skips tags that have a run waiting or running and tags younger than two hours. For each item it deletes the finished runs of the tag first (so nobody can re-run them), then the tag and last the GitHub Release with its package, each only if it still exists, and checks at the end that nothing is left, so running it again finishes an interrupted cleanup. An item whose tag or GitHub Release changed after the list was shown is skipped whole. It never touches released versions, tags it did not create, or runs of such tags. Admins that still point to a deleted dev build fail to install until they switch to another version.
+It shows what it will delete and asks for confirmation. It skips tags that have a run waiting or running and tags younger than two hours. For each item it deletes the finished runs of the tag first (so nobody can re-run them), then the tag and last the GitHub Release with its package, each only if it still exists, and checks at the end that nothing is left, so running it again finishes an interrupted cleanup. An item whose tag or GitHub Release changed after the list was shown is skipped whole. It never touches released versions or tags it did not create. The finished release runs of a version tag that is gone and not released are listed whoever created the tag: such a run can't show whose tag it was, and re-running it could release the tag pushed again. Admins that still point to a deleted dev build fail to install until they switch to another version.
 
 ## Hotfix of an older version
 

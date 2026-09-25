@@ -7,7 +7,7 @@ import { classifyVersion, toolTag } from '../lib/tags.mjs'
 import { lastStable, lastOfLine, stableDesc, isOlderLine } from '../lib/versions.mjs'
 import { parseHeader, hasContent } from '../lib/changelog.mjs'
 import * as semver from '../lib/semver.mjs'
-import { ActionResult, classifyRunTag, releaseState } from './common.mjs'
+import { ActionResult, classifyRunTag, releaseState, asMessage } from './common.mjs'
 import { bootstrapOf } from '../lib/project.mjs'
 
 const HOUR = 60 * 60 * 1000
@@ -63,7 +63,9 @@ export async function validate(a) {
   const git = new Git(a.workspace)
   // Whose tag started the run is known only while it is still on the run's commit; otherwise it may have been
   // anybody's: nothing to release, and no trace of the tool.
-  const tag = await a.gh.tag(a.tagName)
+  const tag = await a.gh.tag(a.tagName).catch((e) => {
+    throw new ActionResult('unverified', `the tag ${a.tagName} could not be read: ${asMessage(e)}`)
+  })
   if (!tag) throw new ActionResult('nothing', `the tag ${a.tagName} no longer exists`)
   if (tag.commit !== a.sha) throw new ActionResult('nothing', `the tag ${a.tagName} now points to ${tag.commit.slice(0, 12)}, not to the commit of this run`)
   const { info, message } = classifyRunTag(tag)

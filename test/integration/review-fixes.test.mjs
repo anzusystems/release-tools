@@ -9,6 +9,7 @@ import { setupProject, git } from '../helpers/project.mjs'
 import { Git } from '../../lib/git.mjs'
 import { run } from '../../lib/exec.mjs'
 import { formatTagMessage } from '../../lib/tags.mjs'
+import { GitHubError } from '../../lib/github.mjs'
 
 const pick = (/** @type {RegExp} */ re) => ({ match: 'What do you want to publish?', answer: (/** @type {any} */ c) => re.test(c.label) })
 const FINAL = pick(/^(final|finish) /)
@@ -428,15 +429,27 @@ test('cleanup deletes only what it listed: a tag created again during the questi
   assert.ok(p.gh.runList.some((r) => r.headBranch === '1.0.0-beta.1'), 'its runs stay')
 })
 
-test('runs of a foreign tag are no trace of the tool: nothing is restored, listed or deleted', async (t) => {
+test('runs of a foreign tag are no trace of the tool: no tag is restored for them, and runs of unreleased versions go', async (t) => {
   const p = await setupProject({ version: '1.0.0' })
   t.after(() => p.dispose())
-  // 0.9.0 released by another workflow (with provenance), 0.8.0 never; both had lightweight tags, now deleted
+  // 0.9.0 released by another workflow (with provenance), 0.8.0 never; both had lightweight tags, now deleted.
+  // The run of 0.9.0 could not read its tag (a GitHub error before it knew whose the tag was).
   const head = await git(p.work, ['rev-parse', 'HEAD'])
   p.registry.publish('0.9.0', Buffer.from('old flow'), 'latest', head)
+  const tag = p.gh.tag.bind(p.gh)
+  let fail = true
+  p.gh.tag = async (/** @type {string} */ name) => {
+    if (name === '0.9.0' && fail && p.gh.pumping) {
+      fail = false
+      throw new GitHubError('GET /git/ref/tags/0.9.0: 502 Bad Gateway', 502, null)
+    }
+    return tag(name)
+  }
   await git(p.work, ['push', '--quiet', 'origin', 'HEAD:refs/tags/0.9.0', 'HEAD:refs/tags/0.8.0'])
   await p.gh.sync()
   await p.gh.pump()
+  const run9 = p.gh.runList.find((r) => r.headBranch === '0.9.0')
+  assert.match(run9.jobs.find((/** @type {any} */ j) => j.name === 'build').annotations[0].message, /^unverified: /)
   // 0.7.0: a lightweight tag moved to another commit before its first run looked at it
   p.gh.autoRun = false
   await git(p.work, ['push', '--quiet', 'origin', 'HEAD:refs/tags/0.7.0'])
@@ -451,17 +464,47 @@ test('runs of a foreign tag are no trace of the tool: nothing is restored, liste
   await git(p.work, ['push', '--quiet', 'origin', ':refs/tags/0.9.0', ':refs/tags/0.8.0', ':refs/tags/0.7.0'])
   await p.gh.sync()
   await p.gh.pump()
-  const count = () => p.gh.runList.filter((r) => ['0.8.0', '0.7.0'].includes(r.headBranch)).length
-  const foreign = count()
-  assert.ok(foreign > 0)
+  const runs9 = p.gh.runList.filter((r) => r.headBranch === '0.9.0').length
   p.gh.offsetMs = 3 * 60 * 60 * 1000
-  assert.deepEqual(await p.cli('cleanup', []), [])
+  const done = await p.cli('cleanup', [
+    { match: 'What to delete?', answer: 'delete all' },
+    { match: 'Delete these', answer: true },
+  ])
+  assert.deepEqual([.../** @type {string[]} */ (done)].sort(), ['0.7.0', '0.8.0'])
+  assert.equal(p.gh.runList.filter((r) => ['0.8.0', '0.7.0'].includes(r.headBranch)).length, 0)
   assert.equal(await p.gh.tag('0.9.0'), null, 'no tag of the tool for a foreign release')
   assert.equal(p.gh.releaseList.some((r) => r.tagName === '0.9.0'), false)
-  assert.equal(count(), foreign, 'the foreign runs stay')
+  assert.equal(p.gh.runList.filter((r) => r.headBranch === '0.9.0').length, runs9, 'the runs of the foreign release stay')
   await assert.rejects(p.cli('publish', []), /no answer/)
   assert.doesNotMatch(p.lastUi?.text() ?? '', /0\.9\.0/)
 })
+
+for (const how of ['looked after the deletion', 'cancelled in the queue']) {
+  test(`the run of a tool tag deleted by hand while it waited (${how}) is deleted by cleanup, so it cannot be re-run`, async (t) => {
+    const p = await setupProject({ version: '1.0.0' })
+    t.after(() => p.dispose())
+    await startRelease(p, '1.0.0', '1.0.0')
+    const head = await p.sha('refs/heads/release/1.0.0')
+    p.gh.autoRun = false
+    const name = '1.0.0-beta.1'
+    await p.gh.createApiTag(name, head, formatTagMessage({ kind: 'prerelease', id: 'x' }), false)
+    const queued = p.gh.runList.find((r) => r.headBranch === name)
+    await p.gh.deleteTag(name)
+    if (how === 'cancelled in the queue') {
+      queued.status = 'completed'
+      queued.conclusion = 'cancelled'
+    }
+    p.gh.autoRun = true
+    await p.gh.pump()
+    p.gh.offsetMs = 3 * 60 * 60 * 1000
+    const done = await p.cli('cleanup', [
+      { match: 'What to delete?', answer: 'delete all' },
+      { match: 'Delete these', answer: true },
+    ])
+    assert.deepEqual(done, [name])
+    assert.equal(p.gh.runList.some((r) => r.id === queued.id), false)
+  })
+}
 
 test('another content on npm while its run is running: a second command waits for the run and adds no Release', async (t) => {
   const p = await setupProject({ version: '1.0.0' })
@@ -486,7 +529,7 @@ test('another content on npm while its run is running: a second command waits fo
   second.catch(() => {})
   while (!secondUi.text().includes('waiting for the release run of 1.0.0-rc.1')) await sleep(10)
   open()
-  await first
+  await assert.rejects(first, /another content than its release run built/)
   await assert.rejects(second, /another content than its release run built/)
   assert.equal(p.gh.releaseList.some((r) => r.tagName === '1.0.0-rc.1'), false)
 })

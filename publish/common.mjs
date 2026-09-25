@@ -14,7 +14,8 @@ export const ARTIFACT_NAME = 'release-tools'
 /** A result the action reports to the CLI as an annotation titled `release-tools`. */
 export class ActionResult extends Error {
   /**
-   * @param {string} code nothing | invalid-tag | invalid-run | checks-failed | build-failed | package-mismatch |
+   * @param {string} code nothing | unverified (failed before the tag was known to be the tool's) | invalid-tag |
+   *   invalid-run | checks-failed | build-failed | package-mismatch |
    *   publish-failed | integrity-mismatch (another content on npm) | commit-mismatch (npm provenance names another
    *   commit) | release-deferred
    * @param {string} message
