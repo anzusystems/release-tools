@@ -43,13 +43,13 @@ test('classifyVersion: stable, prerelease, dev', () => {
 })
 
 test('tag message: format and parse, both separators, unknown keys, old formats', () => {
-  const m = formatTagMessage({ kind: 'final', pr: 12, candidate: '3.1.0-rc.2', confirmedBy: 'volarname', id: 'abc123' })
-  assert.equal(m, 'release-tools: final\npr: 12\ncandidate: 3.1.0-rc.2\nconfirmed-by: volarname\nid: abc123\n')
+  const m = formatTagMessage({ kind: 'final', pr: 12, candidate: '3.1.0-rc.2', confirmedBy: 'a-maintainer', id: 'abc123' })
+  assert.equal(m, 'release-tools: final\npr: 12\ncandidate: 3.1.0-rc.2\nconfirmed-by: a-maintainer\nid: abc123\n')
   const p = parseTagMessage(m)
   assert.equal(p?.kind, 'final')
   assert.equal(p?.pr, 12)
   assert.equal(p?.candidate, '3.1.0-rc.2')
-  assert.equal(p?.confirmedBy, 'volarname')
+  assert.equal(p?.confirmedBy, 'a-maintainer')
   assert.equal(p?.id, 'abc123')
   // The one-line form of the plan and unknown keys from a newer version.
   const one = parseTagMessage('release-tools: final; pr: 7; candidate: 3.1.0-rc.1; future-key: x\nsomething: else\n')
