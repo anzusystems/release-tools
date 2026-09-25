@@ -143,7 +143,7 @@ A name starts with a letter, may contain letters, digits and hyphens, and must n
 ❯ delete all
   delete those older than … days
 ```
-It shows what it will delete and asks for confirmation. It skips tags that have a run waiting or running and tags younger than two hours. For each item it deletes the finished runs of the tag first (so nobody can re-run them), then the tag and last the GitHub Release with its package, each only if it still exists, and checks at the end that nothing is left, so running it again finishes an interrupted cleanup. It never touches released versions or tags it did not create. Admins that still point to a deleted dev build fail to install until they switch to another version.
+It shows what it will delete and asks for confirmation. It skips tags that have a run waiting or running and tags younger than two hours. For each item it deletes the finished runs of the tag first (so nobody can re-run them), then the tag and last the GitHub Release with its package, each only if it still exists, and checks at the end that nothing is left, so running it again finishes an interrupted cleanup. An item whose tag or GitHub Release changed after the list was shown is skipped whole. It never touches released versions, tags it did not create, or runs of such tags. Admins that still point to a deleted dev build fail to install until they switch to another version.
 
 ## Hotfix of an older version
 
@@ -296,9 +296,9 @@ The project's release workflow (in common-admin `.github/workflows/release-packa
 
 It runs in two jobs:
 - `build`, with no access to publishing and with the project's settings from the commit: it validates the tag (a final must contain the previous release; a hotfix must be the next patch and must not contain a newer line), installs, runs the project's setup and checks (`ci.setup`, `ci.checks`; not for a dev build), builds and packs. It checks that the version inside the package is right, the content of the package (`pack.verify`) and, for a stable version with `requireTestedPrerelease`, that it is the same as the rc recorded in the tag.
-- `publish`, without the project's code and with a fixed environment set by the tool: it verifies that the package is the one `build` produced, checks its `package.json` again and that the tag is still exactly the one `build` saw, runs `npm publish`, checks that npm recorded the tagged commit, creates the GitHub Release, then checks the registry (integrity and npm tags) and reports a mismatch as a warning.
+- `publish`, without the project's code and with a fixed environment set by the tool: it verifies that the package is the one `build` produced, checks its `package.json` again and that the tag is still exactly the one `build` saw, runs `npm publish`, checks that npm recorded the tagged commit, creates the GitHub Release, then checks the registry (integrity and npm tags) and reports a mismatch as a warning. When the version is already on npm with another content than the package of the run, the run ends with an error and no GitHub Release; `release:publish` does not add it either and stops with the link to the run. If the package on npm is right after all, create the GitHub Release by hand (`gh release create X.Y.Z --verify-tag`) and run `release:publish` again.
 
-All release runs of the project wait in one queue, first in, first out (GitHub keeps up to 100 waiting). When the version is already on npm, a run only adds what is missing.
+All release runs of the project wait in one queue, first in, first out (GitHub keeps up to 100 waiting). When the version is already on npm, a run only adds what is missing; the GitHub Release of a version released before the run started is added by `release:publish`.
 
 Relative links in the changelog are turned into absolute links at the tag in the GitHub Release, where relative links would not work.
 

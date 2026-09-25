@@ -61,6 +61,8 @@ async function githubContains(gh, sha, head) {
  */
 export async function validate(a) {
   const git = new Git(a.workspace)
+  // A tag gone before the run could read it may have been anybody's: nothing to release, and no trace of the tool.
+  if (!(await a.gh.tag(a.tagName))) throw new ActionResult('nothing', `the tag ${a.tagName} no longer exists`)
   const tag = await currentTag(a)
   const { info, message } = classifyRunTag(tag)
   a.output('tag-object', tag.refSha)

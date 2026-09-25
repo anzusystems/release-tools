@@ -15,7 +15,8 @@ export const ARTIFACT_NAME = 'release-tools'
 export class ActionResult extends Error {
   /**
    * @param {string} code nothing | invalid-tag | invalid-run | checks-failed | build-failed | package-mismatch |
-   *   publish-failed | integrity-mismatch | release-deferred
+   *   publish-failed | integrity-mismatch (another content on npm) | commit-mismatch (npm provenance names another
+   *   commit) | release-deferred
    * @param {string} message
    * @param {{ fail?: boolean }} [options] fail: the job fails (default true, except for nothing)
    */

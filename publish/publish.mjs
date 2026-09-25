@@ -73,19 +73,21 @@ export async function publish(a, input) {
   }
 
   if (npm && kind !== 'dev') {
+    let result = 'exists'
     if (!wasReleased) {
       if (!tgz || !tgzPath) throw new ActionResult('invalid-run', 'the artifact has no package; the version was released when the build job ran')
       const distTags = await /** @type {any} */ (registry).distTags(settings.package)
       npmTag = npmTagFor({ version, kind: /** @type {any} */ (kind), distTags, released: others })
       await currentTagIs(a, input.tagObject)
-      const result = await publishToNpm(a, registry, { version, tgzPath, tgz, tag: npmTag })
-      if (result === 'exists') {
-        const v = await /** @type {any} */ (registry).version(settings.package, version)
-        if (!v || v.integrity !== integrity(tgz)) {
-          throw new ActionResult('integrity-mismatch', `${version} is already on npm with another content (integrity ${v?.integrity ?? 'unknown'})`)
-        }
-        a.log(`${version} was already on npm with the same content`)
+      result = await publishToNpm(a, registry, { version, tgzPath, tgz, tag: npmTag })
+    }
+    // Released before (another run, or an earlier attempt of this job): only the package of this run counts.
+    if (result === 'exists' && tgz) {
+      const v = await /** @type {any} */ (registry).version(settings.package, version)
+      if (!v || v.integrity !== integrity(tgz)) {
+        throw new ActionResult('integrity-mismatch', `${version} is already on npm with another content (integrity ${v?.integrity ?? 'unknown'})`)
       }
+      a.log(`${version} was already on npm with the same content`)
     }
     const commit = await /** @type {any} */ (registry).provenanceCommit(settings.package, version, { waitMs: 180000 })
     if (commit === null) {
@@ -95,7 +97,7 @@ export async function publish(a, input) {
       throw new ActionResult('release-deferred', `the provenance of ${version} could not be read yet; run release:publish to add the GitHub Release`)
     }
     if (commit !== a.sha) {
-      throw new ActionResult('integrity-mismatch', `${version} on npm was built from ${commit.slice(0, 12)}, not from the tagged commit ${a.sha.slice(0, 12)}`)
+      throw new ActionResult('commit-mismatch', `${version} on npm was built from ${commit.slice(0, 12)}, not from the tagged commit ${a.sha.slice(0, 12)}`)
     }
   }
 
@@ -108,6 +110,9 @@ export async function publish(a, input) {
   let release = existing ?? null
   if (existing?.draft) {
     a.annotate('notice', 'release-deferred', `the GitHub Release of ${tag.name} is a draft; release:publish publishes it`)
+  } else if (!existing && npm && kind !== 'dev' && !tgz) {
+    // The build job ran after the version was released and packed nothing: its content cannot be compared here.
+    a.annotate('notice', 'release-deferred', `${version} was released before this run; release:publish adds its GitHub Release`)
   } else if (!existing) {
     const body = await readFile(join(input.artifactDir, 'body.md'), 'utf8')
     release = await a.gh.createRelease({
@@ -155,7 +160,7 @@ export async function publish(a, input) {
       .filter((l) => l !== null)
       .join('\n'),
   )
-  if (!existing?.draft) a.annotate('notice', 'released', `${tag.name} is released`)
+  if (release && !release.draft) a.annotate('notice', 'released', `${tag.name} is released`)
 }
 
 /**
