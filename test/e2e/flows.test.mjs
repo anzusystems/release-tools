@@ -274,13 +274,15 @@ test('e2e: classic protection with an up-to-date branch: main moves while the re
 test('e2e: a final interrupted after each of its steps is finished by running it again, nothing twice', { skip }, async () => {
   const s = await resetSandbox({ version: '1.0.0' })
   try {
+    // pull requests of earlier scenarios stay (GitHub cannot delete them)
+    const before = Math.max(0, ...(await s.gh.pulls({ state: 'all' })).map((x) => x.number))
     const folder = await startRelease(s, '1.0.0', '1.0.0')
     for (const step of ['final-commit', 'push', 'pull-request', 'push-tag', 'merge']) {
       await assert.rejects(cli('publish', folder, [FINAL], { failAt: step }), /interrupted/, step)
     }
     await cli('publish', folder, [FINAL])
     assert.ok(await s.registry.version('', '1.0.0'))
-    assert.equal((await s.gh.pulls({ head: 'release/1.0.0', base: 'main', state: 'all' })).length, 1, 'one release pull request')
+    assert.equal((await s.gh.pulls({ head: 'release/1.0.0', base: 'main', state: 'all' })).filter((x) => x.number > before).length, 1, 'one release pull request')
     const tagRuns = (await s.gh.tagRuns('release.yml', '1.0.0')).filter((r) => r.event === 'push')
     assert.equal(tagRuns.length, 1, 'one tag, one run')
     assert.ok(await contains(s.gh, /** @type {string} */ ((await s.gh.tag('1.0.0'))?.commit), 'main'))
