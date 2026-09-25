@@ -112,6 +112,38 @@ test('a dangling symbolic link changed during the question is noticed; a branch 
   await git(p.work, ['branch', 'spare', 'main'])
   await assert.rejects(g.deleteBranch('spare', head), /changed meanwhile/)
   assert.ok(await git(p.work, ['rev-parse', '--verify', 'refs/heads/spare']))
+  // a symbolic branch never makes the tool delete the branch it points to
+  await git(p.work, ['symbolic-ref', 'refs/heads/release/9.9.9', 'refs/heads/spare'])
+  const spare = await git(p.work, ['rev-parse', 'refs/heads/spare'])
+  await assert.rejects(g.deleteBranch('release/9.9.9', spare), /symbolic ref/)
+  assert.equal(await git(p.work, ['rev-parse', 'refs/heads/spare']), spare)
+  // a branch a folder is bisecting stays
+  await git(p.work, ['branch', 'bisected', 'main'])
+  const other = join(p.root, 'bisect-folder')
+  await git(p.work, ['worktree', 'add', '--quiet', other, 'bisected'])
+  await git(other, ['bisect', 'start'])
+  await git(other, ['checkout', '--quiet', '--detach', 'HEAD'])
+  const bisected = await git(p.work, ['rev-parse', 'refs/heads/bisected'])
+  await assert.rejects(g.deleteBranch('bisected', bisected), /used by the folder/)
+  // config of a deleted branch goes with it
+  await git(p.work, ['branch', 'gone', 'main'])
+  await git(p.work, ['config', 'branch.gone.description', 'x'])
+  await g.deleteBranch('gone', await git(p.work, ['rev-parse', 'refs/heads/gone']))
+  assert.equal((await run('git', ['config', '--get', 'branch.gone.description'], { cwd: p.work, allowFail: true })).code, 1)
+})
+
+test('fingerprints tell apart names and link targets that are not UTF-8', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const { symlinkSync, unlinkSync } = await import('node:fs')
+  const g = new Git(p.work)
+  const link = Buffer.concat([Buffer.from(`${p.work}/`), Buffer.from([0x6c, 0xff])])
+  symlinkSync(Buffer.from([0x61, 0xfe]), link)
+  const first = await g.fingerprint()
+  unlinkSync(link)
+  symlinkSync(Buffer.from([0x61, 0xfd]), link)
+  const second = await g.fingerprint()
+  assert.notEqual(first.text, second.text)
 })
 
 test('cancel a hotfix after confirming its commits that were not pushed', async (t) => {
