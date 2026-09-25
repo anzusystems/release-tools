@@ -208,15 +208,12 @@ export async function validate(a) {
  * @param {Set<string>} released
  */
 async function checkNoNewerLine(a, git, version, released) {
-  for (const [line, versions] of newerLines(version, released)) {
-    let seen = false
+  for (const versions of newerLines(version, released).values()) {
     for (const v of versions) {
       const t = await a.gh.tag(v)
-      if (!t) continue
-      seen = true
+      if (!t) throw new ActionResult('invalid-tag', `${v} is released but has no tag, so the tagged commit cannot be checked against it`)
       if (await contains(git, t.commit, a.sha)) throw new ActionResult('invalid-tag', `the tagged commit contains ${v} of a newer line`)
     }
-    if (!seen) throw new ActionResult('invalid-tag', `no released version of the line ${line} has a tag, so the tagged commit cannot be checked against it`)
   }
 }
 

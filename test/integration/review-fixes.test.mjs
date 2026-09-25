@@ -696,7 +696,7 @@ test('fetching a missing commit by its sha touches no local tag, whatever the fe
   assert.deepEqual((await git(fresh, ['tag', '-l'])).split('\n').filter(Boolean), ['mine'])
 })
 
-test('a hotfix containing a later patch of a newer line is refused, also when the first tag of that line is missing', async (t) => {
+test('a hotfix containing a release of a newer line whose tag is missing is refused', async (t) => {
   const p = await setupProject({ version: '1.0.0' })
   t.after(() => p.dispose())
   await p.cli('publish', [FINAL], { cwd: await startRelease(p, '1.0.0', '1.0.0') })
@@ -712,17 +712,22 @@ test('a hotfix containing a later patch of a newer line is refused, also when th
   await p.cli('start', [{ match: 'What do you want to start?', answer: '1.0.0 → 1.0.1' }])
   const hf = p.folder('hotfix/1.0.1')
   await p.writeChangelog('hotfix/1.0.1', '1.0.1')
-  await git(hf, ['fetch', '--quiet', 'origin', 'refs/tags/1.1.1'])
-  await git(hf, ['merge', '--quiet', '--no-edit', 'FETCH_HEAD'])
+  // 1.1.0, not its hotfix 1.1.1
+  await git(hf, ['merge', '--quiet', '--no-edit', first?.commit ?? ''])
   await git(hf, ['push', '--quiet', 'origin', 'HEAD:refs/heads/hotfix/1.0.1'])
-  await assert.rejects(p.cli('publish', [pick(/^rc/)], { cwd: hf }), /contains 1\.1\.1 of a newer line/)
+  await assert.rejects(p.cli('publish', [pick(/^rc/)], { cwd: hf }), /1\.1\.0 is released but has no tag on GitHub/)
   // the action refuses the same commit
   const head = await git(hf, ['rev-parse', 'HEAD'])
   await p.gh.createApiTag('1.0.1-rc.1', head, formatTagMessage({ kind: 'prerelease', id: 'x' }), false)
   await p.gh.pump()
   const r = p.gh.runList.find((x) => x.headBranch === '1.0.1-rc.1')
-  assert.match(r.jobs.find((/** @type {any} */ j) => j.name === 'build').annotations[0].message, /^invalid-tag: the tagged commit contains 1\.1\.1 of a newer line/)
+  assert.match(r.jobs.find((/** @type {any} */ j) => j.name === 'build').annotations[0].message, /^invalid-tag: 1\.1\.0 is released but has no tag/)
   assert.equal(p.registry.store.has('1.0.1-rc.1'), false)
+  // with every tag there, the commit that contains 1.1.1 is refused for what it contains
+  await git(p.bare, ['update-ref', 'refs/tags/1.1.0', first?.refSha ?? ''])
+  await p.gh.onRefChange('refs/tags/1.1.0', '0'.repeat(40), first?.refSha ?? '', p.gh.now())
+  await p.gh.pump()
+  await assert.rejects(p.cli('publish', [pick(/^rc/)], { cwd: hf }), /contains 1\.1\.0 of a newer line/)
 })
 
 test('the action refuses a prerelease of an older line that was never released', async (t) => {
