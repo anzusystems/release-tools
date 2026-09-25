@@ -28,6 +28,7 @@ export async function publish(a, input) {
     throw new ActionResult('invalid-run', `the tag ${tag.name} is not the tag object this run was built from (it was created again)`)
   }
   const { info, message } = classifyRunTag(tag)
+  a.checkpoint?.('action-publish')
   if (meta.version !== info.version || meta.tag !== tag.name || meta.commit !== a.sha) {
     throw new ActionResult('invalid-run', 'the artifact belongs to another version or commit')
   }

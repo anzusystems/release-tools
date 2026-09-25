@@ -12,6 +12,7 @@ import { createContext } from '../../lib/context.mjs'
 import { ScriptedUI } from '../../lib/ui.mjs'
 import { stubWorkflow } from '../../lib/templates.mjs'
 import { DEFAULT_TEMPLATE } from '../../lib/changelog.mjs'
+import { formatTagMessage, mktagContent } from '../../lib/tags.mjs'
 import { init } from '../../lib/commands/init.mjs'
 import { start } from '../../lib/commands/start.mjs'
 import { publish } from '../../lib/commands/publish.mjs'
@@ -51,12 +52,30 @@ export async function ensureSandbox() {
 }
 
 /**
- * Resets the sandbox: main with the sample project, no other branches, tags, Releases or open pull requests.
- * @param {{ publish?: 'npm' | 'none', version?: string, config?: Record<string, any> }} [o]
+ * A call of the REST API of the sandbox.
+ * @param {GitHub} gh
+ * @param {string} method
+ * @param {string} path below /repos/<sandbox>/, or absolute from /
+ * @param {any} [body]
+ */
+export async function api(gh, method, path, body) {
+  const url = path.startsWith('/') ? path : `${gh.base}/${path}`
+  return (await gh.request(method, url, body === undefined ? { allow404: true } : { body, allow404: true })).data
+}
+
+/**
+ * Resets the sandbox: main with the sample project, no other branches, tags, Releases, open pull requests, rulesets
+ * or branch protection; then the protection of the scenario.
+ * @param {{ publish?: 'npm' | 'none', version?: string, config?: Record<string, any>, failAt?: string, ci?: boolean,
+ *   protection?: 'approval' | 'strict' }} [o] failAt: checkpoints of the action (first attempt only); ci: a check `check`
+ *   on pull requests; approval: a ruleset that requires one approval (admins may bypass); strict: classic protection
+ *   that requires `check` and an up-to-date branch
  */
 export async function resetSandbox(o = {}) {
   await ensureSandbox()
   const gh = new GitHub({ token: await ghToken(), repo: REPO })
+  for (const r of (await api(gh, 'GET', 'rulesets')) ?? []) await api(gh, 'DELETE', `rulesets/${r.id}`)
+  await api(gh, 'DELETE', 'branches/main/protection')
   for (const p of await gh.pulls({ state: 'open' })) await gh.updatePull(p.number, { state: 'closed' })
   for (const r of await gh.releases()) await gh.deleteRelease(r.id)
   for (const t of await gh.tagRefs()) await gh.deleteTag(t.name)
@@ -91,8 +110,11 @@ export async function resetSandbox(o = {}) {
       publish: publishMode,
       environment: 'npmjs-publish',
       actionRef: `anzusystems/release-tools/publish@${ACTION_REF}`,
-      extraEnv: { RELEASE_TOOLS_REGISTRY: 'mock' },
+      extraEnv: { RELEASE_TOOLS_REGISTRY: 'mock', ...(o.failAt ? { RELEASE_TOOLS_FAIL_AT: o.failAt } : {}) },
     }),
+    ...(o.ci
+      ? { '.github/workflows/ci.yml': 'name: CI\non: pull_request\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n' }
+      : {}),
     'doc/changelog/template.md': DEFAULT_TEMPLATE,
     'CHANGELOG.md': '# Changelog\n\nSandbox.\n',
     [SANDBOX_MARK]: 'The end-to-end tests of anzusystems/release-tools reset this repository.\n',
@@ -106,7 +128,86 @@ export async function resetSandbox(o = {}) {
   await git(work, ['commit', '--quiet', '-m', 'sandbox'])
   // The sandbox is the only repository the tests force-push to: they own it.
   await git(work, ['push', '--quiet', '--force', 'origin', 'main'])
+  if (o.protection === 'approval') {
+    await api(gh, 'POST', 'rulesets', {
+      name: 'e2e approval',
+      target: 'branch',
+      enforcement: 'active',
+      conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } },
+      bypass_actors: [{ actor_id: 5, actor_type: 'RepositoryRole', bypass_mode: 'always' }],
+      rules: [
+        {
+          type: 'pull_request',
+          parameters: {
+            required_approving_review_count: 1,
+            dismiss_stale_reviews_on_push: true,
+            require_code_owner_review: false,
+            require_last_push_approval: false,
+            required_review_thread_resolution: false,
+          },
+        },
+      ],
+    })
+  } else if (o.protection === 'strict') {
+    await api(gh, 'PUT', 'branches/main/protection', {
+      required_status_checks: { strict: true, contexts: ['check'] },
+      enforce_admins: false,
+      required_pull_request_reviews: null,
+      restrictions: null,
+    })
+  }
   return { root, work, gh, registry: new MockRegistry(gh) }
+}
+
+/**
+ * Waits until `check` returns something truthy.
+ * @template T
+ * @param {() => Promise<T>} check
+ * @param {{ timeoutMs?: number, what?: string }} [o]
+ * @returns {Promise<NonNullable<T>>}
+ */
+export async function waitFor(check, o = {}) {
+  const until = Date.now() + (o.timeoutMs ?? 10 * 60 * 1000)
+  for (;;) {
+    const v = await check()
+    if (v) return /** @type {NonNullable<T>} */ (v)
+    if (Date.now() > until) throw new Error(`timed out waiting for ${o.what ?? 'a condition'}`)
+    await new Promise((r) => setTimeout(r, 5000))
+  }
+}
+
+/**
+ * Pushes a tag of the tool's format made by hand (for example with an old date), like a clone that kept it.
+ * @param {string} work
+ * @param {{ name: string, commit: string, kind: 'final' | 'hotfix' | 'prerelease' | 'dev', ageSeconds?: number, pr?: number }} t
+ */
+export async function pushToolTag(work, t) {
+  const content = mktagContent({
+    commit: t.commit,
+    name: t.name,
+    tagger: { name: 'e2e', email: 'e2e@example.com' },
+    epochSeconds: Math.floor(Date.now() / 1000) - (t.ageSeconds ?? 0),
+    message: formatTagMessage({ kind: t.kind, pr: t.pr, id: Math.random().toString(16).slice(2, 10) }),
+  })
+  const sha = (await run('git', ['mktag'], { cwd: work, input: content })).stdout.trim()
+  await git(work, ['push', '--quiet', `git@github.com:${REPO}.git`, `${sha}:refs/tags/${t.name}`])
+  return sha
+}
+
+/**
+ * The release-tools result of every job of the finished runs of a tag, newest run first.
+ * @param {GitHub} gh
+ * @param {string} tag
+ */
+export async function runResults(gh, tag) {
+  const out = []
+  for (const r of await gh.tagRuns('release.yml', tag)) {
+    const jobs = await gh.jobs(r.id, { all: true })
+    const codes = []
+    for (const j of jobs) for (const a of await gh.annotations(j.id)) if (a.title === 'release-tools') codes.push(a.message)
+    out.push({ run: r, jobs, codes })
+  }
+  return out
 }
 
 /**

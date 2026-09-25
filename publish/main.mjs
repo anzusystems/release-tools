@@ -50,8 +50,10 @@ export function actionEnv(env, mode = '') {
       else process.stdout.write(line)
     },
     checkpoint: (name) => {
-      // Controlled interruptions of the end-to-end tests; only with the mock registry.
-      if (env.RELEASE_TOOLS_REGISTRY === 'mock' && env.RELEASE_TOOLS_FAIL_AT === name) throw new Error(`interrupted at ${name} (RELEASE_TOOLS_FAIL_AT)`)
+      // Controlled interruptions of the end-to-end tests; only with the mock registry, and only in the first attempt
+      // of a run, so that "Re-run failed jobs" gets through.
+      if (env.RELEASE_TOOLS_REGISTRY !== 'mock' || (env.GITHUB_RUN_ATTEMPT ?? '1') !== '1') return
+      if ((env.RELEASE_TOOLS_FAIL_AT ?? '').split(',').includes(name)) throw new Error(`interrupted at ${name} (RELEASE_TOOLS_FAIL_AT)`)
     },
     log: (m) => process.stdout.write(`${m}\n`),
     env: childEnv,

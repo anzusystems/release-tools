@@ -45,7 +45,7 @@ export class ActionResult extends Error {
  * @property {(markdown: string) => void} summary
  * @property {(level: 'notice' | 'warning' | 'error', code: string, message: string) => void} annotate
  * @property {(message: string) => void} log
- * @property {(name: string) => void} [checkpoint] action-pack, action-npm, action-release
+ * @property {(name: string) => void} [checkpoint] action-pack, action-publish (before npm), action-npm, action-release
  * @property {NodeJS.ProcessEnv} env environment for commands of the project
  * @property {(o: { file: string, tag: string, cwd: string }) => Promise<{ ok: boolean, exists: boolean, output: string }>} [npmPublish]
  */
