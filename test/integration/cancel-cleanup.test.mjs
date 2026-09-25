@@ -82,6 +82,24 @@ test('cleanup: dev builds and tags that never became a release, older than two h
   assert.deepEqual(await p.cli('cleanup', []), [], 'nothing left')
 })
 
+test('cleanup interrupted after deleting a tag: runs first, then the tag; running it again deletes the Release', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  await p.cli('publish', [pick(/^dev/), { match: 'Dev build', answer: 'one' }], { cwd: folder })
+  p.gh.offsetMs = 3 * 60 * 60 * 1000
+  const answers = [
+    { match: 'What to delete?', answer: 'delete all' },
+    { match: 'Delete these', answer: true },
+  ]
+  await assert.rejects(p.cli('cleanup', answers, { failAt: 'cleanup-tag' }), /interrupted/)
+  assert.equal(await p.gh.tag('1.0.0-dev.one'), null, 'the tag is gone')
+  assert.equal(p.gh.runList.filter((r) => r.headBranch === '1.0.0-dev.one' && !r.deleted).length, 0, 'its runs were deleted before the tag')
+  assert.ok(p.gh.releaseList.some((r) => r.tagName === '1.0.0-dev.one'), 'the Release still holds the item')
+  await p.cli('cleanup', answers)
+  assert.equal(p.gh.releaseList.some((r) => r.tagName === '1.0.0-dev.one'), false)
+})
+
 test('a deleted tag pushed again from an old clone is never released (tag age)', async (t) => {
   const p = await setupProject({ version: '1.0.0' })
   t.after(() => p.dispose())
