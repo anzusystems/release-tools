@@ -192,12 +192,13 @@ test('e2e: tags made by hand: an old one is refused, a queue of four runs, a del
       const [r] = await completed(n)
       assert.equal(r.run.conclusion, 'success', `${n}: ${r.codes.join(' | ')}`)
     }
-    // deleted: its run skips the build job; created again on the same commit: a new run
+    // deleted: no run builds anything (GitHub starts no run for the deletion of a tag; seen 25 September 2026)
+    const before = (await s.gh.tagRuns('release.yml', '1.0.0-dev.old')).length
     await s.gh.deleteTag('1.0.0-dev.old')
-    await waitFor(
-      async () => (await runResults(s.gh, '1.0.0-dev.old')).find((x) => x.jobs.some((j) => j.name === 'build' && j.conclusion === 'skipped')),
-      { what: 'the run of the deletion' },
-    )
+    await new Promise((r) => setTimeout(r, 60000))
+    const afterDeletion = (await runResults(s.gh, '1.0.0-dev.old')).slice(0, (await s.gh.tagRuns('release.yml', '1.0.0-dev.old')).length - before)
+    assert.ok(afterDeletion.every((x) => !x.jobs.some((j) => j.name === 'build' && j.conclusion && j.conclusion !== 'skipped')), 'no run of the deletion builds')
+    // created again on the same commit: a new run
     await pushToolTag(s.work, { name: '1.0.0-dev.old', commit: head, kind: 'dev' })
     const again = await completed('1.0.0-dev.old', 2)
     assert.equal(again[0].run.conclusion, 'success', again[0].codes.join(' | '))
