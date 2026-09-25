@@ -115,6 +115,20 @@ test('init interrupted after each file: running it again writes only what is mis
   )
 })
 
+test('the same refusal of the release run twice stops the command instead of moving the tag again and again', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  p.gh.pullRest = async () => {
+    const e = new Error('Not Found')
+    Object.assign(e, { status: 404 })
+    throw e
+  }
+  await assert.rejects(p.cli('publish', [FINAL], { cwd: folder }), /refused the tag 1\.0\.0 again/)
+  assert.ok(p.gh.runList.filter((r) => r.headBranch === '1.0.0' && !r.deleted).length <= 2)
+  assert.equal(p.registry.store.size, 0)
+})
+
 test('a commit with [skip ci] is never tagged', async (t) => {
   const p = await setupProject({ version: '1.0.0' })
   t.after(() => p.dispose())

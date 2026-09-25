@@ -92,6 +92,29 @@ test('another conflict with main: the merge stays unfinished; after the resoluti
   assert.equal(await p.show('main', 'doc/readme.md'), 'both')
 })
 
+test('a conflict with main after the release: resolved and committed in the folder, pushed by the next run, merged after confirming', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  await p.cli('publish', [FINAL], { cwd: await startRelease(p, '1.0.0', '1.0.0') })
+  const minor = await startRelease(p, 'minor', '1.1.0')
+  await p.commit(minor, { 'doc/readme.md': 'minor\n' }, 'docs: minor')
+  p.gh.settings.strict = true
+  p.gh.afterRun = async (r) => {
+    if (r.headBranch !== '1.1.0') return
+    p.gh.afterRun = null
+    await p.changeMain({ 'doc/readme.md': 'main\n' }, 'docs: main')
+  }
+  await assert.rejects(p.cli('publish', [FINAL], { cwd: minor }), /left conflicts in:\n\s+doc\/readme.md/)
+  assert.ok(p.registry.store.has('1.1.0'), 'released before the merge')
+  await writeFile(join(minor, 'doc/readme.md'), 'both\n')
+  await git(minor, ['add', 'doc/readme.md'])
+  await git(minor, ['commit', '--quiet', '--no-edit'])
+  await p.cli('publish', [FINAL, { match: 'Is this a resolution of conflicts with main only?', answer: true }], { cwd: minor })
+  assert.ok(await p.isAncestor('1.1.0^{commit}', 'main'))
+  assert.equal(await p.show('main', 'doc/readme.md'), 'both')
+  assert.match(p.lastUi?.text() ?? '', /differs from the automatic result/)
+})
+
 test('release pull request squashed by hand after the release: a new pull request from the released commit', async (t) => {
   const p = await setupProject({ version: '1.0.0' })
   t.after(() => p.dispose())

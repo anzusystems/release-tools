@@ -227,7 +227,7 @@ The final was published, but the published commit is not in `main` yet — for e
 - **More than 30 days later**, when GitHub no longer re-runs a run: a version that is not released gets its tag created again. A missing GitHub Release of a released version is always added by the command, at any time.
 - **The npm tag points to the wrong version after publishing:** the run reports it as a warning. It cannot be changed with trusted publishing; someone with an npm token fixes it by hand.
 
-All commands take `--dry-run`: they run all checks and print what they would do, without changing anything.
+All commands take `--dry-run`: they run the checks up to the first step that would change something, print that step and stop, without changing anything.
 
 </details>
 

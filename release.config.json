@@ -7,6 +7,9 @@
   "node": "24",
   "build": false,
   "ci": {
+    "setup": [
+      "corepack enable"
+    ],
     "checks": [
       "npm test"
     ]

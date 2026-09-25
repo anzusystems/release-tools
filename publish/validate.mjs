@@ -119,7 +119,14 @@ export async function validate(a) {
           throw new ActionResult('invalid-tag', `the tagged commit does not contain the previous release ${last}`)
         }
       }
-      const pr = message.pr ? await a.gh.pull(message.pr).catch(() => null) : null
+      // REST, not GraphQL: the fields the build job needs, readable with GITHUB_TOKEN. Only a missing pull request
+      // makes the tag invalid; another API error fails the job and can be re-run.
+      const pr = message.pr
+        ? await a.gh.pullRest(message.pr).catch((e) => {
+            if (e.status === 404) return null
+            throw e
+          })
+        : null
       if (!pr) throw new ActionResult('invalid-tag', `the tag names no release pull request, or it does not exist`)
       const valid =
         (pr.state === 'open' && pr.baseRef === 'main' && (await githubContains(a.gh, a.sha, pr.headSha))) ||

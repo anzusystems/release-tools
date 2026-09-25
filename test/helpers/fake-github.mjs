@@ -488,6 +488,14 @@ export class FakeGitHub {
     }
   }
 
+  /** @param {number} number */
+  async pullRest(number) {
+    await this.sync()
+    const p = this.pullList.find((x) => x.number === number)
+    if (!p) throw new GitHubError('Not Found', 404, null)
+    return this.info(p)
+  }
+
   /** @param {{ head: string, base: string, title: string, body: string }} o */
   async createPull(o) {
     this.mutate(`open ${o.title}`)
