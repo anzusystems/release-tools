@@ -81,6 +81,30 @@ test('released from another commit than its tag (a safety net): nothing is merge
   assert.ok(p.gh.openPull('release/1.0.0'), 'the release pull request stays open')
 })
 
+test('released from another commit than its tag, confirmed: the tag is replaced in one step on the released commit', async (t) => {
+  const p = await setupProject({ version: '1.0.0' })
+  t.after(() => p.dispose())
+  const folder = await startRelease(p, '1.0.0', '1.0.0')
+  const other = await git(p.bare, ['rev-parse', 'main'])
+  p.gh.afterRun = async (r) => {
+    if (r.headBranch !== '1.0.0') return
+    p.gh.afterRun = null
+    const entry = p.registry.store.get('1.0.0')
+    if (entry) entry.commit = other
+  }
+  const deletions = []
+  const onRef = p.gh.onRefChange.bind(p.gh)
+  p.gh.onRefChange = async (ref, o, n, at) => {
+    if (ref === 'refs/tags/1.0.0' && /^0+$/.test(n)) deletions.push(ref)
+    return onRef(ref, o, n, at)
+  }
+  await p.cli('publish', [FINAL, { match: /Move the tag 1\.0\.0 to/, answer: true }], { cwd: folder }).catch(() => {})
+  const tag = await p.gh.tag('1.0.0')
+  assert.equal(tag?.commit, other, 'the tag points to the released commit')
+  assert.match(tag?.message ?? '', /release-tools: final/)
+  assert.deepEqual(deletions, [], 'the tag was never deleted on the way')
+})
+
 test('a failed run older than 30 days cannot be re-run: the tag is created again on the same commit', async (t) => {
   const p = await setupProject({ version: '1.0.0' })
   t.after(() => p.dispose())
@@ -124,7 +148,7 @@ test('the same refusal of the release run twice stops the command instead of mov
     Object.assign(e, { status: 404 })
     throw e
   }
-  await assert.rejects(p.cli('publish', [FINAL], { cwd: folder }), /refused the tag 1\.0\.0 again/)
+  await assert.rejects(p.cli('publish', [FINAL], { cwd: folder }), /release run of 1\.0\.0 ended the same way again/)
   assert.ok(p.gh.runList.filter((r) => r.headBranch === '1.0.0' && !r.deleted).length <= 2)
   assert.equal(p.registry.store.size, 0)
 })

@@ -262,16 +262,22 @@ test('the tag of the last released version is missing: no return to bootstrap, n
   assert.ok(await p.isAncestor(/** @type {string} */ (commit), 'main'))
 })
 
-test('a run that failed before its jobs started stops the final instead of moving the tag', async (t) => {
+test('a run that failed before its jobs started: the tag is created once more, then the command stops; later it recovers', async (t) => {
   const p = await setupProject({ version: '1.0.0' })
   t.after(() => p.dispose())
   const folder = await startRelease(p, '1.0.0', '1.0.0')
+  const execute = p.gh.execute.bind(p.gh)
   p.gh.execute = async (r) => {
     r.status = 'completed'
     r.conclusion = 'startup_failure'
   }
-  await assert.rejects(p.cli('publish', [FINAL], { cwd: folder }), /failed before its jobs started/)
-  assert.equal(p.gh.runList.filter((r) => r.headBranch === '1.0.0' && !r.deleted).length, 1, 'the tag was not moved')
+  await assert.rejects(p.cli('publish', [FINAL], { cwd: folder }), /ended the same way again[\s\S]*/)
+  assert.equal(p.gh.runList.filter((r) => r.headBranch === '1.0.0' && !r.deleted).length, 1, 'the tag was created again once (the old run is deleted)')
+  assert.match(String(p.lastUi?.text()), /no-jobs/)
+  // GitHub works again: the next run of the command creates the tag again and releases
+  p.gh.execute = execute
+  await p.cli('publish', [FINAL], { cwd: folder })
+  assert.ok(p.registry.store.has('1.0.0'))
 })
 
 test('a prerelease with [skip ci] in the local commit refuses before pushing', async (t) => {
