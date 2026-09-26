@@ -1,0 +1,133 @@
+name: release-tools publish
+description: Checks, builds and publishes the version of a pushed tag created by anzusystems/release-tools
+inputs:
+  mode:
+    description: build (validation, checks, build, pack) or publish (npm and the GitHub Release)
+    required: true
+  tag-object:
+    description: publish mode, the tag object the build job saw
+    required: false
+    default: ''
+  tarball-sha512:
+    description: publish mode, sha512 of the package the build job produced
+    required: false
+    default: ''
+outputs:
+  release:
+    description: build mode, true when the tag is a release the publish job has to finish
+    value: ${{ steps.validate.outputs.release }}
+  tag-object:
+    description: build mode, sha of the tag object
+    value: ${{ steps.validate.outputs.tag-object }}
+  tarball-sha512:
+    description: build mode, sha512 of the package (empty without a package)
+    value: ${{ steps.build.outputs.tarball-sha512 }}
+  version:
+    description: publish mode, the version
+    value: ${{ steps.publish.outputs.version }}
+  tag:
+    description: publish mode, the tag
+    value: ${{ steps.publish.outputs.tag }}
+  prerelease:
+    description: publish mode, true for alpha, beta, rc and dev builds
+    value: ${{ steps.publish.outputs.prerelease }}
+  latest:
+    description: publish mode, true when the version is the GitHub Latest release
+    value: ${{ steps.publish.outputs.latest }}
+  published:
+    description: publish mode, true when the version is released (in this run or earlier)
+    value: ${{ steps.publish.outputs.published }}
+  released-now:
+    description: publish mode, true when this run released the version, in any of its attempts
+    value: ${{ steps.publish.outputs.released-now }}
+runs:
+  using: composite
+  steps:
+    - name: Check the inputs
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        TAG_OBJECT: ${{ inputs.tag-object }}
+        TARBALL_SHA512: ${{ inputs.tarball-sha512 }}
+      run: |
+        case "$MODE" in build|publish) ;; *) echo "::error title=release-tools::invalid-input: mode must be build or publish"; exit 1;; esac
+        if [ "$MODE" = publish ]; then
+          [[ "$TAG_OBJECT" =~ ^[0-9a-f]{40}$ ]] || { echo "::error title=release-tools::invalid-run: tag-object is not a sha"; exit 1; }
+          [[ -z "$TARBALL_SHA512" || "$TARBALL_SHA512" =~ ^[0-9a-f]{128}$ ]] || { echo "::error title=release-tools::invalid-run: tarball-sha512 is not a sha512"; exit 1; }
+        fi
+
+    - name: Node for release-tools
+      uses: actions/setup-node@v5
+      with:
+        node-version: '24.15.0'
+
+    - id: tool
+      name: Remember the Node of release-tools
+      shell: bash
+      run: echo "node=$(command -v node)" >> "$GITHUB_OUTPUT"
+
+    - name: Checkout the tagged commit
+      if: inputs.mode == 'build'
+      uses: actions/checkout@v5
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+
+    - id: validate
+      name: Validate the tag
+      if: inputs.mode == 'build'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TOOL_NODE: ${{ steps.tool.outputs.node }}
+      run: '"$TOOL_NODE" "$GITHUB_ACTION_PATH/main.mjs" validate'
+
+    - name: Node for the build
+      if: inputs.mode == 'build' && steps.validate.outputs.build == 'true'
+      uses: actions/setup-node@v5
+      with:
+        node-version: ${{ steps.validate.outputs.node-version }}
+
+    - id: build
+      name: Install, check, build and pack
+      if: inputs.mode == 'build' && steps.validate.outputs.release == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TOOL_NODE: ${{ steps.tool.outputs.node }}
+        RELEASE_TOOLS_STATE: ${{ steps.validate.outputs.state-file }}
+      run: '"$TOOL_NODE" "$GITHUB_ACTION_PATH/main.mjs" build'
+
+    - name: Report the result of the build
+      if: always() && inputs.mode == 'build' && steps.validate.outputs.release == 'true'
+      shell: bash
+      run: '[ ! -f "$RUNNER_TEMP/release-tools-result" ] || cat "$RUNNER_TEMP/release-tools-result"'
+
+    - name: Keep the package for the publish job
+      if: inputs.mode == 'build' && steps.validate.outputs.release == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-tools
+        path: ${{ runner.temp }}/release-tools-artifact
+        if-no-files-found: error
+        retention-days: 30
+        overwrite: true
+
+    - name: Get the package of the build job
+      if: inputs.mode == 'publish'
+      uses: actions/download-artifact@v4
+      with:
+        name: release-tools
+        path: ${{ runner.temp }}/release-tools-artifact
+
+    - id: publish
+      name: Publish
+      if: inputs.mode == 'publish'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TOOL_NODE: ${{ steps.tool.outputs.node }}
+        TAG_OBJECT: ${{ inputs.tag-object }}
+        TARBALL_SHA512: ${{ inputs.tarball-sha512 }}
+      run: '"$TOOL_NODE" "$GITHUB_ACTION_PATH/main.mjs" publish'

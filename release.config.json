@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "repo": "anzusystems/release-tools",
+  "publish": "none",
+  "releaseWorkflow": "release.yml",
+  "changelogIndex": "CHANGELOG.md",
+  "node": "24",
+  "build": false,
+  "ci": {
+    "setup": [
+      "corepack enable"
+    ],
+    "checks": [
+      "npm test"
+    ]
+  }
+}
